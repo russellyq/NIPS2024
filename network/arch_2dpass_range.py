@@ -9,6 +9,8 @@ from network.baseline import get_model_range as SPVCNN
 from network.base_model import LightningBaseModel
 from network.basic_block import ResNetFCN, DepthResNetFCN, ResNet_Model
 
+from network.baseline import criterion
+
 class xModalKD(nn.Module):
     def __init__(self,config):
         super(xModalKD, self).__init__()
@@ -73,6 +75,8 @@ class xModalKD(nn.Module):
 
         self.ce_loss = nn.CrossEntropyLoss(weight=seg_labelweights, ignore_index=config['dataset_params']['ignore_label'])
         self.lovasz_loss = Lovasz_loss(ignore=config['dataset_params']['ignore_label'])
+
+        self.criterion = criterion(config)
 
     @staticmethod
     def p2img_mapping(pts_fea, p2img_idx, batch_idx):
@@ -182,14 +186,22 @@ class xModalKD(nn.Module):
     def forward(self, data_dict):
         loss = 0
         img_seg_feat = []
+        pts_seg_feat = []
 
         for idx in range(self.num_scales):
             singlescale_loss, fuse_feat_C, fuse_feat_L = self.fusion_to_single_KD(data_dict, idx)
-            img_seg_feat.append(fuse_feat)
+            img_seg_feat.append(fuse_feat_C)
+            pts_seg_feat.append(fuse_feat_L)
             loss += singlescale_loss
 
-        img_seg_logits = self.classifier(torch.cat(img_seg_feat, 1))
+        img_seg_logits = self.classifier_C(torch.cat(img_seg_feat, 1))
+        pts_seg_logits = self.classifier_L(torch.cat(pts_seg_feat, 1))
         loss += self.seg_loss(img_seg_logits, data_dict['img_label'])
+        loss += self.seg_loss(pts_seg_feat, data_dict['labels'])
+        data_dict['logits'] = pts_seg_logits
+
+        data_dict = self.criterion(data_dict)
+        
         data_dict['loss'] += loss
 
         return data_dict
@@ -211,25 +223,21 @@ class get_model(LightningBaseModel):
                                 pretrained=config.model_params.pretrained2d,
                                 config=config)       
         
-        if not self.baseline_only:
-            self.model_2d = DepthResNetFCN(
-                    depth_backbone=self.model_3d.depth_backbone,
-                    backbone=config.model_params.backbone_2d,
-                    pretrained=config.model_params.pretrained2d,
-                    config=config
-                )
-            
-            self.fusion = xModalKD(config)
-        else:
-            print('Start vanilla training!')
-
+        self.model_2d = DepthResNetFCN(
+                depth_backbone=self.model_3d.depth_backbone,
+                backbone=config.model_params.backbone_2d,
+                pretrained=config.model_params.pretrained2d,
+                config=config
+            )
+        
+        self.fusion = xModalKD(config)
+        
     def forward(self, data_dict):
         # 3D network
         data_dict = self.model_3d(data_dict)
 
         # training with 2D network
-        if self.training and not self.baseline_only:
-            data_dict = self.model_2d(data_dict)
-            data_dict = self.fusion(data_dict)
+        data_dict = self.model_2d(data_dict)
+        data_dict = self.fusion(data_dict)
 
         return data_dict
