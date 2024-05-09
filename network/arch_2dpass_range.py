@@ -28,23 +28,37 @@ class xModalKD(nn.Module):
                     nn.Linear(128, self.num_classes))
             )
 
-        self.multihead_fuse_classifier = nn.ModuleList()
+        self.multihead_fuse_classifier_L, self.multihead_fuse_classifier_C = nn.ModuleList(), nn.ModuleList()
         for i in range(self.num_scales):
-            self.multihead_fuse_classifier.append(
+            self.multihead_fuse_classifier_L.append(
                 nn.Sequential(
                     nn.Linear(self.hiden_size, 128),
                     nn.ReLU(True),
                     nn.Linear(128, self.num_classes))
             )
-        self.leaners = nn.ModuleList()
-        self.fcs1 = nn.ModuleList()
-        self.fcs2 = nn.ModuleList()
+            self.multihead_fuse_classifier_C.append(
+                nn.Sequential(
+                    nn.Linear(self.hiden_size, 128),
+                    nn.ReLU(True),
+                    nn.Linear(128, self.num_classes))
+            )
+        self.leaners_L2C, self.leaners_C2L = nn.ModuleList(), nn.ModuleList()
+        self.fcs1_L2C, self.fcs1_C2L = nn.ModuleList(), nn.ModuleList()
+        self.fcs2_L2C, self.fcs2_C2L = nn.ModuleList(), nn.ModuleList()
         for i in range(self.num_scales):
-            self.leaners.append(nn.Sequential(nn.Linear(self.hiden_size, self.hiden_size)))
-            self.fcs1.append(nn.Sequential(nn.Linear(self.hiden_size * 2, self.hiden_size)))
-            self.fcs2.append(nn.Sequential(nn.Linear(self.hiden_size, self.hiden_size)))
+            self.leaners_L2C.append(nn.Sequential(nn.Linear(self.hiden_size, self.hiden_size)))
+            self.fcs1_L2C.append(nn.Sequential(nn.Linear(self.hiden_size * 2, self.hiden_size)))
+            self.fcs2_L2C.append(nn.Sequential(nn.Linear(self.hiden_size, self.hiden_size)))
+            self.leaners_C2L.append(nn.Sequential(nn.Linear(self.hiden_size, self.hiden_size)))
+            self.fcs1_C2L.append(nn.Sequential(nn.Linear(self.hiden_size * 2, self.hiden_size)))
+            self.fcs2_C2L.append(nn.Sequential(nn.Linear(self.hiden_size, self.hiden_size)))
 
-        self.classifier = nn.Sequential(
+        self.classifier_C = nn.Sequential(
+            nn.Linear(self.hiden_size * self.num_scales, 128),
+            nn.ReLU(True),
+            nn.Linear(128, self.num_classes),
+        )
+        self.classifier_L = nn.Sequential(
             nn.Linear(self.hiden_size * self.num_scales, 128),
             nn.ReLU(True),
             nn.Linear(128, self.num_classes),
@@ -99,54 +113,69 @@ class xModalKD(nn.Module):
         last_scale = self.scale_list[idx - 1] if idx > 0 else 1
         img_feat = data_dict['img_scale{}'.format(self.scale_list[idx])]
         pts_feat = data_dict['layer_{}'.format(idx)]['pts_feat']
+        pts_feat_f = data_dict['layer_{}'.format(idx)]['pts_feat_f']
         coors_inv = data_dict['scale_{}'.format(last_scale)]['coors_inv']
-        feat_learner = data_dict['range_depth_layer_{}'.format(idx)]
 
-        # print('\nidx:', idx)
-        # print('img_feat:', img_feat.size())
-        # print('pts_feat:', pts_feat.size())
-        # print('feat_learner:', feat_learner.size())
-        # print('batch_idx:', batch_idx.size())
+        g_img_feat = data_dict['range_layer_{}'.format(idx)]
+
+        laser_x = data_dict['laser_x']
+        laser_y = data_dict['laser_y']
+        batch_size = data_dict['batch_size']
+        range_feats = []
+        for batch_id in range(batch_size):
+            x_batch = laser_x[torch.where(laser_x[:, 0] == batch_id)][:, -1]
+            y_batch = laser_y[torch.where(laser_y[:, 0] == batch_id)][:, -1]
+            range_feat = g_img_feat[batch_id, :, y_batch.long(), x_batch.long()]
+            range_feats.append(range_feat.permute(1,0).contiguous())
+        range_feats = torch.cat(range_feats, 0)
 
         # 3D prediction
-        pts_pred_full = self.multihead_3d_classifier[idx](pts_feat)
+        # pts_pred_full = self.multihead_3d_classifier[idx](pts_feat)
 
         # correspondence
         pts_label_full = self.voxelize_labels(data_dict['labels'], data_dict['layer_{}'.format(idx)]['full_coors'])
-        feat_learner = self.p2img_mapping(feat_learner, point2img_index, batch_idx)
-        pts_feat = self.p2img_mapping(pts_feat[coors_inv], point2img_index, batch_idx)
-        pts_pred = self.p2img_mapping(pts_pred_full[coors_inv], point2img_index, batch_idx)
+        pts_feat_f2C = self.p2img_mapping(pts_feat_f, point2img_index, batch_idx)
+        range_feats_2C = self.p2img_mapping(range_feats, point2img_index, batch_idx)
 
-
-        # modality fusion
-        # feat_learner = F.relu(self.leaners[idx](pts_feat))
-        feat_cat = torch.cat([pts_feat, feat_learner], 1)
+        # modality fusion: LiDAR to CAM
+        feat_learner = F.relu(self.leaners_L2C[idx](pts_feat_f2C))
+        feat_cat = torch.cat([range_feats_2C, feat_learner], 1)
         feat_cat = self.fcs1[idx](feat_cat)
         feat_weight = torch.sigmoid(self.fcs2[idx](feat_cat))
-        fuse_feat = F.relu(feat_cat * feat_weight)
-
+        fuse_feat_C = F.relu(feat_cat * feat_weight)
         # fusion prediction
-        fuse_pred = self.multihead_fuse_classifier[idx](fuse_feat)        
+        fuse_pred_C = self.multihead_fuse_classifier_C[idx](fuse_feat_C)
+
+        # modality fusion:  CAM to LiDAR
+        feat_learner = F.relu(self.leaners_C2L[idx](range_feat))
+        feat_cat = torch.cat([pts_feat_f, feat_learner], 1)
+        feat_cat = self.fcs1[idx](feat_cat)
+        feat_weight = torch.sigmoid(self.fcs2[idx](feat_cat))
+        fuse_feat_L = F.relu(feat_cat * feat_weight)
+        # fusion prediction
+        fuse_pred_L = self.multihead_fuse_classifier_L[idx](fuse_feat_L)    
+
+        fuse_pred_L2C = self.p2img_mapping(fuse_pred_L, point2img_index, batch_idx)    
 
         # Segmentation Loss
-        seg_loss_3d = self.seg_loss(pts_pred_full, pts_label_full)
-        seg_loss_2d = self.seg_loss(fuse_pred, data_dict['img_label'])
+        seg_loss_3d = self.seg_loss(fuse_pred_L, pts_label_full[coors_inv])
+        seg_loss_2d = self.seg_loss(fuse_pred_C, data_dict['img_label'])
         loss = seg_loss_3d + seg_loss_2d * self.lambda_seg2d / self.num_scales 
 
         # range - color - depth:
         mse_loss = nn.MSELoss()
-        g_loss = mse_loss(feat_learner, img_feat)        
-        loss += g_loss * self.lambda_seg2d / self.num_scales
+        g_loss = mse_loss(range_feats_2C, img_feat)        
+        loss += g_loss * self.lambda_seg2d / self.num_scales / img_feat.shape[0]
 
 
         # KL divergence
         xm_loss = F.kl_div(
-            F.log_softmax(pts_pred, dim=1),
-            F.softmax(fuse_pred.detach(), dim=1),
+            F.softmax(fuse_pred_L2C, dim=1),
+            F.softmax(fuse_pred_C.detach(), dim=1),
         )
         loss += xm_loss * self.lambda_xm / self.num_scales
 
-        return loss, fuse_feat
+        return loss, fuse_feat_C, fuse_feat_L
 
 
 
@@ -155,7 +184,7 @@ class xModalKD(nn.Module):
         img_seg_feat = []
 
         for idx in range(self.num_scales):
-            singlescale_loss, fuse_feat = self.fusion_to_single_KD(data_dict, idx)
+            singlescale_loss, fuse_feat_C, fuse_feat_L = self.fusion_to_single_KD(data_dict, idx)
             img_seg_feat.append(fuse_feat)
             loss += singlescale_loss
 

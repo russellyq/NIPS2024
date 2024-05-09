@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 from torchvision.models.resnet import resnet34
 from utils.lovasz_loss import lovasz_softmax
-from mmseg.models.backbones import DINOv2, SwinTransformer
+from mmseg.models.backbones import SwinTransformer
 from third_party.SparseTransformer import sptr
 
 class SparseAttenBlock(spconv.SparseModule):
@@ -27,10 +27,19 @@ class SparseAttenBlock(spconv.SparseModule):
         window_size=6, 
         shift_win=False,
         )
-        self.basicblock = SparseBasicBlock(in_channels, out_channels, indice_key)
+        self.layers_in = spconv.SparseSequential(
+            spconv.SubMConv3d(in_channels, out_channels, 1, indice_key=indice_key, bias=False),
+            nn.BatchNorm1d(out_channels),
+        )
+        self.layers = spconv.SparseSequential(
+            spconv.SubMConv3d(in_channels, out_channels, 3, indice_key=indice_key, bias=False),
+            nn.BatchNorm1d(out_channels),
+            nn.LeakyReLU(0.1),
+            spconv.SubMConv3d(out_channels, out_channels, 3, indice_key=indice_key, bias=False),
+            nn.BatchNorm1d(out_channels),
+        )
 
     def forward(self, x):
-        x = self.basicblock(x)
         feats, indices, spatial_shape = x.features, x.indices, x.spatial_shape
         # feats: [N, C], indices: [N, 4] with batch indices in the 0-th column
         input_tensor = sptr.SparseTrTensor(feats, indices, spatial_shape=spatial_shape, batch_size=None)
@@ -38,7 +47,11 @@ class SparseAttenBlock(spconv.SparseModule):
 
         # Extract features from output tensor
         output_feats = output_tensor.query_feats
-        return x.replace_feature(output_feats)
+
+        identity = self.layers_in(x)
+        output = self.layers(x)
+
+        return output.replace_feature(F.leaky_relu(output.features + identity.features + output_feats, 0.1))
 
 class SparseBasicBlock(spconv.SparseModule):
     def __init__(self, in_channels, out_channels, indice_key):
@@ -93,27 +106,42 @@ class ResNet_Encoder(nn.Module):
         layer4_out = self.layer4(layer3_out)
         return layer1_out, layer2_out, layer3_out, layer4_out
 
-class SwimT_Model(nn.Module):
+class SwimT_Encoder(nn.Module):
     def __init__(self, backbone="resnet34", pretrained=True, config=None, freeze=False):
-        super(SwimT_Model, self).__init__()
-        swim_t_config = {'EMBED_DIM': 96,
-                        'DEPTHS': [ 2, 2, 6, 2 ],
-                        'NUM_HEADS': [ 3, 6, 12, 24 ],
-                        'WINDOW_SIZE': 7,}
+        super(SwimT_Encoder, self).__init__()
+        swim_b_config = {'EMBED_DIM': 128,
+                        'DEPTHS': [ 2, 2, 18, 2 ],
+                        'NUM_HEADS': [ 4, 8, 16, 32 ],
+                        'WINDOW_SIZE': 12,}
         swim_l_config = {'EMBED_DIM': 192,
                         'DEPTHS': [ 2, 2, 18, 2 ],
                         'NUM_HEADS': [ 6, 12, 24, 48 ],
                         'WINDOW_SIZE': 12,}
         self.hiden_size = config['model_params']['hiden_size']
         
-        self.encoder = SwinTransformer(embed_dims=swim_t_config['EMBED_DIM'],
-                                       window_size=swim_t_config['WINDOW_SIZE'],
-                                       depths=swim_t_config['DEPTHS'],
-                                       num_heads=swim_t_config['NUM_HEADS'],
+        self.encoder = SwinTransformer(embed_dims=swim_b_config['EMBED_DIM'],
+                                       window_size=swim_b_config['WINDOW_SIZE'],
+                                       depths=swim_b_config['DEPTHS'],
+                                       num_heads=swim_b_config['NUM_HEADS'],
                                        pretrained='/home/yanqiao/2DPASS/pretrained/swin_tiny_patch4_window7_224.pth')
         if freeze:
             for param in self.encoder.parameters():
                 param.requires_grad = False
+        
+    def forward(self, x):
+        h, w = x.shape[2], x.shape[3]
+        if h % 16 != 0 or w % 16 != 0:
+            assert False, "invalid input size: {}".format(x.shape)
+        # Encoder: Swim-T for Image feat extraction
+        layer1_out, layer2_out, layer3_out, layer4_out = self.encoder(x)
+        
+        return layer1_out, layer2_out, layer3_out, layer4_out
+
+class SwimT_Decoder(nn.Module):
+    def __init__(self, backbone="resnet34", pretrained=True, config=None):
+        super(SwimT_Decoder, self).__init__()
+        self.hiden_size = config['model_params']['hiden_size']
+        
         # Decoder
         self.deconv_layer1 = nn.Sequential(
             nn.Conv2d(96, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
@@ -149,12 +177,8 @@ class SwimT_Model(nn.Module):
             nn.ReLU(inplace=True),
             nn.UpsamplingNearest2d(scale_factor=4),
         ) # [B, 512, 20, 30] -> [B, 64, 20, 30] -> [B, 64, 40, 60] -> [B, 64, 80, 120] -> [B, 64, 320, 480]
-    def forward(self, x):
-        h, w = x.shape[2], x.shape[3]
-        if h % 16 != 0 or w % 16 != 0:
-            assert False, "invalid input size: {}".format(x.shape)
-        # Encoder: Swim-T for Image feat extraction
-        layer1_out, layer2_out, layer3_out, layer4_out = self.encoder(x)
+    def forward(self, layer1_out, layer2_out, layer3_out, layer4_out):
+
         # swim encoder feature shape: 
         # [B, 96, 80, 120]
         # [B, 192, 40, 60]
@@ -220,24 +244,33 @@ class DepthResNetFCN(nn.Module):
     def __init__(self, depth_backbone, backbone="resnet34", pretrained=True, config=None):
         super(DepthResNetFCN, self).__init__()
 
-        # self.image_bacbone = ResNet_Model(backbone=backbone, pretrained=pretrained, config=config, freeze=True)
-        self.image_bacbone = SwimT_Model(backbone=backbone, pretrained=pretrained, config=config, freeze=True)
-        self.depth_backbone = depth_backbone
-
+        self.image_encoder = SwimT_Encoder(backbone=backbone, pretrained=pretrained, config=config, freeze=True)
+        self.range_encoder = SwimT_Encoder(backbone=backbone, pretrained=pretrained, config=config, freeze=False)
+        self.decoder = SwimT_Decoder(backbone=backbone, pretrained=pretrained, config=config)
+    
     def forward(self, data_dict):       
         # color image backbone
         x = data_dict['img']
-        depth_x = data_dict['depth_img']
+        # depth_x = data_dict['depth_img']
+        range_xyz = data_dict['project_xyz']
         h, w = x.shape[2], x.shape[3]
         if h % 16 != 0 or w % 16 != 0:
             assert False, "invalid input size: {}".format(x.shape)
-        layer1_out,layer2_out,layer3_out,layer4_out = self.image_bacbone(x)
-        depth_layer1_out,depth_layer2_out,depth_layer3_out,depth_layer4_out = self.depth_backbone(depth_x)
+        layer1_out,layer2_out,layer3_out,layer4_out = self.image_encoder(x)
+        range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out = self.range_encoder(x)
 
-        data_dict['img_scale2'] = layer1_out + depth_layer1_out
-        data_dict['img_scale4'] = layer2_out + depth_layer2_out
-        data_dict['img_scale8'] = layer3_out + depth_layer3_out
-        data_dict['img_scale16'] = layer4_out + depth_layer4_out
+        layer1_out,layer2_out,layer3_out,layer4_out = self.decoder(layer1_out,layer2_out,layer3_out,layer4_out)
+        range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out = self.decoder(range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out)
+        
+        data_dict['img_scale2'] = layer1_out 
+        data_dict['img_scale4'] = layer2_out 
+        data_dict['img_scale8'] = layer3_out 
+        data_dict['img_scale16'] = layer4_out 
+
+        data_dict['range_layer_0'] = range_layer1_out 
+        data_dict['range_layer_1'] = range_layer2_out 
+        data_dict['range_layer_2'] = range_layer3_out 
+        data_dict['range_layer_3'] = range_layer4_out 
 
         process_keys = [k for k in data_dict.keys() if k.find('img_scale') != -1]
         img_indices = data_dict['img_indices']
