@@ -181,6 +181,13 @@ class MaskedAutoencoderViT(nn.Module):
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
+        model_checkpoint= torch.load('/home/yanqiao/2DPASS/pretrained/mae_pretrain_vit_large.pth')
+        model_state_dict = model_checkpoint['model']
+        for param in self.state_dict():
+            if param in model_state_dict and self.state_dict()[param].size() == model_state_dict[param].size():
+                self.state_dict()[param] = model_state_dict[param]
+                print('initing with param: ', param)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             # we use xavier_uniform following official JAX ViT:

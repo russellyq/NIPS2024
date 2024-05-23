@@ -17,9 +17,9 @@ class get_model(LightningBaseModel):
         self.mae = mae_vit_large_patch16(in_chans=5, img_with_size=(256, 1024))
         
         
-    def forward(self, data_dict):
+    def forward(self, data_dict, mask_ratio=0.1):
         with torch.cuda.amp.autocast():
-            data_dict, loss, _, _ = self.mae(data_dict)
+            data_dict, loss, _, _ = self.mae(data_dict, mask_ratio=mask_ratio)
             data_dict['loss'] = loss
         # from IPython import embed; embed()
         return data_dict
