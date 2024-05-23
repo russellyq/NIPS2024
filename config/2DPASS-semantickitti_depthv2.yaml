@@ -3,7 +3,7 @@ format_version: 1
 ###################
 ## Model options
 model_params:
-  model_architecture: "arch_2dpass_range_v2"
+  model_architecture: "arch_2dpass_range"
 
   input_dims: 4
   spatial_shape:
@@ -75,7 +75,7 @@ dataset_params:
 
   train_data_loader:
     data_path: "/home/yanqiao/Documents/semantic-kitti/dataset/sequences/"
-    batch_size: 6
+    batch_size: 4
     shuffle: True
     num_workers: 1
     rotate_aug: True
@@ -90,7 +90,7 @@ dataset_params:
     num_workers: 1
 
     # normal test
-    batch_size: 6
+    batch_size: 8
     rotate_aug: False
     flip_aug: False
     scale_aug: False
