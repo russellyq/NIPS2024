@@ -12,9 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from network.basic_block import Lovasz_loss, ResNet_Model, SwimT_Model, ResNetFCN, DepthResNetFCN
+from network.basic_block import Lovasz_loss, ResNet_Model, ResNetFCN, DepthResNetFCN
 from network.base_model import LightningBaseModel
-from network.basic_block import SparseBasicBlock, SparseAttenBlock
+from network.basic_block import SparseBasicBlock, SparseAttenBlock, base_block
 from network.voxel_fea_generator import voxel_3d_generator, voxelization
 
 
@@ -76,6 +76,7 @@ class SPVBlock(nn.Module):
         self.last_scale = last_scale
         self.spatial_shape = spatial_shape
         self.v_enc = spconv.SparseSequential(
+            base_block(in_channels, out_channels, self.indice_key),
             # SparseBasicBlock(in_channels, out_channels, self.indice_key),
             # SparseBasicBlock(out_channels, out_channels, self.indice_key),
             SparseAttenBlock(in_channels, out_channels, self.indice_key),

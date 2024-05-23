@@ -207,9 +207,14 @@ class point_image_dataset_semkitti(data.Dataset):
 
         proj_idx = proj_idx[:, :, np.newaxis]
         proj_range = proj_range[:, :, np.newaxis]
+        proj_remission = proj_remission[:, :, np.newaxis]
+        proj_range_img = np.concatenate([proj_xyz, proj_range, proj_remission], 2)
         proj_range = np.concatenate([proj_range, proj_range, proj_range], 2)
+        proj_remission = np.concatenate([proj_remission, proj_remission, proj_remission], 2)
         proj_range = cv2.normalize(proj_range, None, 0, 1, cv2.NORM_MINMAX)
+        proj_remission = cv2.normalize(proj_remission, None, 0, 1, cv2.NORM_MINMAX)
         proj_xyz = cv2.normalize(proj_xyz, None, 0, 1, cv2.NORM_MINMAX)
+        proj_range_img = cv2.normalize(proj_range_img, None, 0, 1, cv2.NORM_MINMAX)
 
         ### 2D Augmentation ###
         if self.bottom_crop:
@@ -279,6 +284,8 @@ class point_image_dataset_semkitti(data.Dataset):
 
         data_dict['proj_xyz'] = proj_xyz
         data_dict['proj_range'] = proj_range
+        data_dict['proj_remission'] = proj_remission
+        data_dict['proj_range_img'] = proj_range_img
         data_dict['proj_idx'] = proj_idx
         data_dict['proj_x'] = proj_x
         data_dict['proj_y'] = proj_y
@@ -514,6 +521,7 @@ class point_image_dataset_mix_semkitti(data.Dataset):
 
         data_dict['proj_xyz'] = proj_xyz
         data_dict['proj_range'] = proj_range
+        data_dict['proj_remission'] = proj_remission
         data_dict['proj_x'] = proj_x
         data_dict['proj_y'] = proj_y
 
@@ -554,11 +562,18 @@ class point_image_dataset_mix_semkitti(data.Dataset):
 
             proj_idx = proj_idx[:, :, np.newaxis]
             proj_range = proj_range[:, :, np.newaxis]
+            proj_remission = proj_remission[:, :, np.newaxis]
+            proj_range_img = np.concatenate([proj_xyz, proj_range, proj_remission], 2)
             proj_range = np.concatenate([proj_range, proj_range, proj_range], 2)
+            proj_remission = np.concatenate([proj_remission, proj_remission, proj_remission], 2)
             proj_range = cv2.normalize(proj_range, None, 0, 1, cv2.NORM_MINMAX)
+            proj_remission = cv2.normalize(proj_remission, None, 0, 1, cv2.NORM_MINMAX)
             proj_xyz = cv2.normalize(proj_xyz, None, 0, 1, cv2.NORM_MINMAX)
+            proj_range_img = cv2.normalize(proj_range_img, None, 0, 1, cv2.NORM_MINMAX)
             cutmix_data_dict['proj_xyz'] = proj_xyz
             cutmix_data_dict['proj_range'] = proj_range
+            cutmix_data_dict['proj_range_img'] = proj_range_img
+            cutmix_data_dict['proj_remission'] = proj_remission
             cutmix_data_dict['proj_x'] = proj_x
             cutmix_data_dict['proj_y'] = proj_y
 
@@ -566,6 +581,8 @@ class point_image_dataset_mix_semkitti(data.Dataset):
             cutmix_data_dict = data_dict
 
         return cutmix_data_dict
+
+
 
 
 @register_dataset
@@ -900,6 +917,7 @@ def collate_fn_default(data):
     depth_img = [torch.from_numpy(d['depth_img']) for d in data]
     proj_xyz = [torch.from_numpy(d['proj_xyz']) for d in data]
     proj_range = [torch.from_numpy(d['proj_range']) for d in data]
+    proj_range_img = [torch.from_numpy(d['proj_range_img']) for d in data]
     # proj_idx = [torch.from_numpy(d['proj_idx']) for d in data]
     img_indices = [d['img_indices'] for d in data]
     img_label = [torch.from_numpy(d['img_label']) for d in data]
@@ -932,6 +950,7 @@ def collate_fn_default(data):
         'depth_img': torch.stack(depth_img, 0).permute(0, 3, 1, 2),
         'proj_xyz': torch.stack(proj_xyz, 0).permute(0, 3, 1, 2),
         'proj_range': torch.stack(proj_range, 0).permute(0, 3, 1, 2),
+        'proj_range_img': torch.stack(proj_range_img, 0).permute(0, 3, 1, 2),
         # 'proj_idx': torch.stack(proj_idx, 0).permute(0, 3, 1, 2),
         'laser_x': torch.cat(coord_x_pad, 0).long(),
         'laser_y': torch.cat(coord_y_pad, 0).long(),

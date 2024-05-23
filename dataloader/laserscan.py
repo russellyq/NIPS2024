@@ -9,7 +9,7 @@ class LaserScan:
       self,
       project: bool = True, 
       H: int = 64,
-      W: int = 512,
+      W: int = 1024,
       fov_up: float = 3.0,
       fov_down: float = -25.0, 
       if_drop: bool = False,

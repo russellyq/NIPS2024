@@ -15,6 +15,14 @@ from utils.lovasz_loss import lovasz_softmax
 from mmseg.models.backbones import SwinTransformer
 from third_party.SparseTransformer import sptr
 
+def base_block(in_channels, out_channels, indice_key):
+    conv = spconv.SparseSequential(
+        spconv.SubMConv3d(in_channels, out_channels, 1, indice_key=indice_key, bias=False),
+        nn.BatchNorm1d(out_channels),
+        nn.ReLU()
+    )
+    return conv
+
 class SparseAttenBlock(spconv.SparseModule):
     def __init__(self, in_channels, out_channels, indice_key):
         super(SparseAttenBlock, self).__init__()
@@ -123,42 +131,81 @@ class SwimT_Encoder(nn.Module):
                                        window_size=swim_b_config['WINDOW_SIZE'],
                                        depths=swim_b_config['DEPTHS'],
                                        num_heads=swim_b_config['NUM_HEADS'],
-                                       pretrained='/home/yanqiao/2DPASS/pretrained/swin_tiny_patch4_window7_224.pth')
+                                       pretrained='/home/yanqiao/2DPASS/pretrained/swin_base_patch4_window7_224.pth')
         if freeze:
             for param in self.encoder.parameters():
                 param.requires_grad = False
         
     def forward(self, x):
-        h, w = x.shape[2], x.shape[3]
-        if h % 16 != 0 or w % 16 != 0:
-            assert False, "invalid input size: {}".format(x.shape)
+        # h, w = x.shape[2], x.shape[3]
+        # if h % 16 != 0 or w % 16 != 0:
+        #     assert False, "invalid input size: {}".format(x.shape)
         # Encoder: Swim-T for Image feat extraction
         layer1_out, layer2_out, layer3_out, layer4_out = self.encoder(x)
         
         return layer1_out, layer2_out, layer3_out, layer4_out
 
+class SwimT_Upsampler(nn.Module):
+    def __init__(self, backbone="resnet34", pretrained=True, config=None):
+        super(SwimT_Upsampler, self).__init__()
+        self.hiden_size = config['model_params']['hiden_size']
+        bottom_crop = config['dataset_params']['bottom_crop']
+        # tiny: 96, 192, 384, 768
+        # base: 128, 256, 512, 1024
+        # Decoder
+        self.deconv_layer1 = nn.Sequential(
+            nn.Conv2d(128, self.hiden_size, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Upsample(scale_factor=4, mode='bilinear'),
+        ) # [B, 96, 80, 120] -> [B, 64, 80, 120] -> [B, 64, 160, 240] -> [B, 64, 320, 480]
+        self.deconv_layer2 = nn.Sequential(
+            nn.Conv2d(256, self.hiden_size, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Upsample(scale_factor=8, mode='bilinear'),
+        ) # [B, 192, 40, 60] -> [B, 64, 40, 60] -> [B, 64, 80, 120] -> [B, 64, 320, 480]
+        self.deconv_layer3 = nn.Sequential(
+            nn.Conv2d(512, self.hiden_size, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Upsample(scale_factor=16, mode='bilinear'),
+        ) 
+        self.deconv_layer4 = nn.Sequential(
+            nn.Conv2d(1024, self.hiden_size, kernel_size=1, stride=1, padding=0, bias=False),
+            nn.Upsample(scale_factor=32, mode='bilinear'),
+        ) # [B, 512, 20, 30] -> [B, 64, 20, 30] -> [B, 64, 40, 60] -> [B, 64, 80, 120] -> [B, 64, 320, 480]
+    def forward(self, layer1_out, layer2_out, layer3_out, layer4_out):
+
+        # swim encoder feature shape: 
+        # [B, 96, 80, 120]
+        # [B, 192, 40, 60]
+        # [B, 384, 20, 30]
+        # [B, 768, 10, 15]
+        layer1_out = self.deconv_layer1(layer1_out)
+        layer2_out = self.deconv_layer2(layer2_out)
+        layer3_out = self.deconv_layer3(layer3_out)
+        layer4_out = self.deconv_layer4(layer4_out)
+        return layer1_out, layer2_out, layer3_out, layer4_out
+
+
 class SwimT_Decoder(nn.Module):
     def __init__(self, backbone="resnet34", pretrained=True, config=None):
         super(SwimT_Decoder, self).__init__()
         self.hiden_size = config['model_params']['hiden_size']
-        
+        # tiny: 96, 192, 384, 768
+        # base: 128, 256, 512, 1024
         # Decoder
         self.deconv_layer1 = nn.Sequential(
-            nn.Conv2d(96, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
+            nn.Conv2d(128, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(self.hiden_size, self.hiden_size, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1),
             nn.ReLU(inplace=True),
             nn.UpsamplingNearest2d(scale_factor=2),
         ) # [B, 96, 80, 120] -> [B, 64, 80, 120] -> [B, 64, 160, 240] -> [B, 64, 320, 480]
         self.deconv_layer2 = nn.Sequential(
-            nn.Conv2d(192, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
+            nn.Conv2d(256, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(self.hiden_size, self.hiden_size, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1),
             nn.ReLU(inplace=True),
             nn.UpsamplingNearest2d(scale_factor=4),
         ) # [B, 192, 40, 60] -> [B, 64, 40, 60] -> [B, 64, 80, 120] -> [B, 64, 320, 480]
         self.deconv_layer3 = nn.Sequential(
-            nn.Conv2d(384, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
+            nn.Conv2d(512, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(self.hiden_size, self.hiden_size, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1),
             nn.ReLU(inplace=True),
@@ -167,7 +214,7 @@ class SwimT_Decoder(nn.Module):
             nn.UpsamplingNearest2d(scale_factor=4),
         ) 
         self.deconv_layer4 = nn.Sequential(
-            nn.Conv2d(768, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
+            nn.Conv2d(1024, self.hiden_size, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(self.hiden_size, self.hiden_size, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1),
             nn.ReLU(inplace=True),
@@ -241,23 +288,24 @@ class ResNet_Model(nn.Module):
     
 
 class DepthResNetFCN(nn.Module):
-    def __init__(self, depth_backbone, backbone="resnet34", pretrained=True, config=None):
+    def __init__(self, backbone="resnet34", pretrained=True, config=None):
         super(DepthResNetFCN, self).__init__()
 
         self.image_encoder = SwimT_Encoder(backbone=backbone, pretrained=pretrained, config=config, freeze=True)
         self.range_encoder = SwimT_Encoder(backbone=backbone, pretrained=pretrained, config=config, freeze=False)
-        self.decoder = SwimT_Decoder(backbone=backbone, pretrained=pretrained, config=config)
+        # self.decoder = SwimT_Decoder(backbone=backbone, pretrained=pretrained, config=config)
+        self.decoder = SwimT_Upsampler(backbone=backbone, pretrained=pretrained, config=config)
     
     def forward(self, data_dict):       
         # color image backbone
         x = data_dict['img']
         # depth_x = data_dict['depth_img']
-        range_xyz = data_dict['project_xyz']
+        range_xyz = data_dict['proj_xyz']
         h, w = x.shape[2], x.shape[3]
-        if h % 16 != 0 or w % 16 != 0:
-            assert False, "invalid input size: {}".format(x.shape)
+        # if h % 16 != 0 or w % 16 != 0:
+        #     assert False, "invalid input size: {}".format(x.shape)
         layer1_out,layer2_out,layer3_out,layer4_out = self.image_encoder(x)
-        range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out = self.range_encoder(x)
+        range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out = self.range_encoder(range_xyz)
 
         layer1_out,layer2_out,layer3_out,layer4_out = self.decoder(layer1_out,layer2_out,layer3_out,layer4_out)
         range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out = self.decoder(range_layer1_out,range_layer2_out,range_layer3_out,range_layer4_out)
@@ -266,6 +314,8 @@ class DepthResNetFCN(nn.Module):
         data_dict['img_scale4'] = layer2_out 
         data_dict['img_scale8'] = layer3_out 
         data_dict['img_scale16'] = layer4_out 
+
+
 
         data_dict['range_layer_0'] = range_layer1_out 
         data_dict['range_layer_1'] = range_layer2_out 

@@ -134,7 +134,8 @@ class xModalKD(nn.Module):
         range_feats = torch.cat(range_feats, 0)
 
         # 3D prediction
-        # pts_pred_full = self.multihead_3d_classifier[idx](pts_feat)
+        pts_pred_full = self.multihead_3d_classifier[idx](pts_feat)
+        pts_pred = self.p2img_mapping(pts_pred_full[coors_inv], point2img_index, batch_idx)
 
         # correspondence
         pts_label_full = self.voxelize_labels(data_dict['labels'], data_dict['layer_{}'.format(idx)]['full_coors'])
@@ -144,25 +145,21 @@ class xModalKD(nn.Module):
         # modality fusion: LiDAR to CAM
         feat_learner = F.relu(self.leaners_L2C[idx](pts_feat_f2C))
         feat_cat = torch.cat([range_feats_2C, feat_learner], 1)
-        feat_cat = self.fcs1[idx](feat_cat)
-        feat_weight = torch.sigmoid(self.fcs2[idx](feat_cat))
+        feat_cat = self.fcs1_L2C[idx](feat_cat)
+        feat_weight = torch.sigmoid(self.fcs2_L2C[idx](feat_cat))
         fuse_feat_C = F.relu(feat_cat * feat_weight)
         # fusion prediction
         fuse_pred_C = self.multihead_fuse_classifier_C[idx](fuse_feat_C)
 
         # modality fusion:  CAM to LiDAR
-        feat_learner = F.relu(self.leaners_C2L[idx](range_feat))
+        feat_learner = F.relu(self.leaners_C2L[idx](range_feats))
         feat_cat = torch.cat([pts_feat_f, feat_learner], 1)
-        feat_cat = self.fcs1[idx](feat_cat)
-        feat_weight = torch.sigmoid(self.fcs2[idx](feat_cat))
+        feat_cat = self.fcs1_C2L[idx](feat_cat)
+        feat_weight = torch.sigmoid(self.fcs2_C2L[idx](feat_cat))
         fuse_feat_L = F.relu(feat_cat * feat_weight)
-        # fusion prediction
-        fuse_pred_L = self.multihead_fuse_classifier_L[idx](fuse_feat_L)    
-
-        fuse_pred_L2C = self.p2img_mapping(fuse_pred_L, point2img_index, batch_idx)    
 
         # Segmentation Loss
-        seg_loss_3d = self.seg_loss(fuse_pred_L, pts_label_full[coors_inv])
+        seg_loss_3d = self.seg_loss(pts_pred_full, pts_label_full)
         seg_loss_2d = self.seg_loss(fuse_pred_C, data_dict['img_label'])
         loss = seg_loss_3d + seg_loss_2d * self.lambda_seg2d / self.num_scales 
 
@@ -171,10 +168,9 @@ class xModalKD(nn.Module):
         g_loss = mse_loss(range_feats_2C, img_feat)        
         loss += g_loss * self.lambda_seg2d / self.num_scales / img_feat.shape[0]
 
-
         # KL divergence
         xm_loss = F.kl_div(
-            F.softmax(fuse_pred_L2C, dim=1),
+            F.log_softmax(pts_pred, dim=1),
             F.softmax(fuse_pred_C.detach(), dim=1),
         )
         loss += xm_loss * self.lambda_xm / self.num_scales
@@ -197,7 +193,6 @@ class xModalKD(nn.Module):
         img_seg_logits = self.classifier_C(torch.cat(img_seg_feat, 1))
         pts_seg_logits = self.classifier_L(torch.cat(pts_seg_feat, 1))
         loss += self.seg_loss(img_seg_logits, data_dict['img_label'])
-        loss += self.seg_loss(pts_seg_feat, data_dict['labels'])
         data_dict['logits'] = pts_seg_logits
 
         data_dict = self.criterion(data_dict)
@@ -224,7 +219,6 @@ class get_model(LightningBaseModel):
                                 config=config)       
         
         self.model_2d = DepthResNetFCN(
-                depth_backbone=self.model_3d.depth_backbone,
                 backbone=config.model_params.backbone_2d,
                 pretrained=config.model_params.pretrained2d,
                 config=config
