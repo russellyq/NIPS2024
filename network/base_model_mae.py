@@ -23,8 +23,8 @@ class LightningBaseModel(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.train_acc = Accuracy()
-        self.val_acc = Accuracy(compute_on_step=False)
+        # self.train_acc = Accuracy()
+        # self.val_acc = Accuracy(compute_on_step=False)
         # self.val_iou = IoU(self.args['dataset_params'], compute_on_step=False)
 
         if self.args['submit_to_server']:
@@ -100,35 +100,33 @@ class LightningBaseModel(pl.LightningModule):
     def training_step(self, data_dict, batch_idx):
         data_dict = self.forward(data_dict)
         
-        pred_img = data_dict['pred_img']
-        target_img = data_dict['img']
+        # pred_img = data_dict['pred_img']
+        # target_img = data_dict['img']
 
-        from IPython import embed; embed()
+        # pred_img = cv2.normalize(pred_img.detach().cpu().numpy().astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
+        # target_img = cv2.normalize(target_img.detach().cpu().numpy(), None, 0, 255, cv2.NORM_MINMAX)
 
-        pred_img = cv2.normalize(pred_img.detach().cpu().numpy().astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
-        target_img = cv2.normalize(target_img.detach().cpu().numpy(), None, 0, 255, cv2.NORM_MINMAX)
-
-        pred_img = torch.from_numpy(pred_img).to(torch.uint8)
-        target_img = torch.from_numpy(target_img).to(torch.uint8)
+        # pred_img = torch.from_numpy(pred_img).to(torch.uint8)
+        # target_img = torch.from_numpy(target_img).to(torch.uint8)
         
-        self.train_acc(pred_img, target_img)
+        # self.train_acc(pred_img, target_img)
         return data_dict['loss']
 
 
     def validation_step(self, data_dict, batch_idx):
         data_dict = self.forward(data_dict)
 
-        pred_img = data_dict['pred_img']
-        target_img = data_dict['img']
-        # from IPython import embed; embed()
-        pred_img = cv2.normalize(pred_img.detach().cpu().numpy().astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
-        target_img = cv2.normalize(target_img.detach().cpu().numpy(), None, 0, 255, cv2.NORM_MINMAX)
+        # pred_img = data_dict['pred_img']
+        # target_img = data_dict['img']
+        # # from IPython import embed; embed()
+        # pred_img = cv2.normalize(pred_img.detach().cpu().numpy().astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
+        # target_img = cv2.normalize(target_img.detach().cpu().numpy(), None, 0, 255, cv2.NORM_MINMAX)
 
-        pred_img = torch.from_numpy(pred_img).to(torch.uint8)
-        target_img = torch.from_numpy(target_img).to(torch.uint8)
+        # pred_img = torch.from_numpy(pred_img).to(torch.uint8)
+        # target_img = torch.from_numpy(target_img).to(torch.uint8)
 
-        self.val_acc(pred_img, target_img)
-        self.log('val/acc', self.val_acc, on_epoch=True)
+        # self.val_acc(pred_img, target_img)
+        self.log('val/acc', data_dict['loss'], on_epoch=True)
 
         return data_dict['loss']
 
