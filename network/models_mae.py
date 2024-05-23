@@ -314,7 +314,7 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, data_dict, mask_ratio=0.75):
+    def forward(self, data_dict, mask_ratio=0.1):
         imgs = data_dict['img']
         range_imgs = data_dict['proj_range_img']
 

@@ -27,13 +27,13 @@ class LightningBaseModel(pl.LightningModule):
         # self.val_acc = Accuracy(compute_on_step=False)
         # self.val_iou = IoU(self.args['dataset_params'], compute_on_step=False)
 
-        if self.args['submit_to_server']:
-            self.submit_dir = os.path.dirname(self.args['checkpoint']) + '/submit_' + datetime.now().strftime(
-                '%Y_%m_%d')
-            with open(self.args['dataset_params']['label_mapping'], 'r') as stream:
-                self.mapfile = yaml.safe_load(stream)
+        # if self.args['submit_to_server']:
+        #     self.submit_dir = os.path.dirname(self.args['checkpoint']) + '/submit_' + datetime.now().strftime(
+        #         '%Y_%m_%d')
+        #     with open(self.args['dataset_params']['label_mapping'], 'r') as stream:
+        #         self.mapfile = yaml.safe_load(stream)
 
-        self.ignore_label = self.args['dataset_params']['ignore_label']
+        # self.ignore_label = self.args['dataset_params']['ignore_label']
 
     def configure_optimizers(self):
         if self.args['train_params']['optimizer'] == 'Adam':
