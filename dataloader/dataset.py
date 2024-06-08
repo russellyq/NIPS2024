@@ -146,7 +146,7 @@ class point_image_dataset_semkitti(data.Dataset):
 
         # load 2D data
         image = data['img']
-        depth_image = data['depth_img']
+        # depth_image = data['depth_img']
         proj_matrix = data['proj_matrix']
 
         # project points into image
@@ -232,7 +232,7 @@ class point_image_dataset_semkitti(data.Dataset):
 
             # crop image
             image = image.crop((left, top, right, bottom))
-            depth_image = depth_image.crop((left, top, right, bottom))
+            # depth_image = depth_image.crop((left, top, right, bottom))
             points_img = points_img[keep_idx]
             points_img[:, 0] -= top
             points_img[:, 1] -= left
@@ -245,16 +245,16 @@ class point_image_dataset_semkitti(data.Dataset):
         # 2D augmentation
         if self.color_jitter is not None:
             image = self.color_jitter(image)
-            depth_image = self.color_jitter(depth_image)
+            # depth_image = self.color_jitter(depth_image)
 
         # PIL to numpy
         image = np.array(image, dtype=np.float32, copy=False) / 255.
-        depth_image = np.array(depth_image, dtype=np.float32, copy=False) / 255.
+        # depth_image = np.array(depth_image, dtype=np.float32, copy=False) / 255.
 
         # 2D augmentation
         if np.random.rand() < self.flip2d:
             image = np.ascontiguousarray(np.fliplr(image))
-            depth_image = np.ascontiguousarray(np.fliplr(depth_image))
+            # depth_image = np.ascontiguousarray(np.fliplr(depth_image))
             img_indices[:, 1] = image.shape[1] - 1 - img_indices[:, 1]
 
         # normalize image
@@ -277,7 +277,7 @@ class point_image_dataset_semkitti(data.Dataset):
         data_dict['root'] = root
 
         data_dict['img'] = image
-        data_dict['depth_img'] = depth_image
+        # data_dict['depth_img'] = depth_image
         data_dict['img_indices'] = img_indices
         data_dict['img_label'] = img_label
         data_dict['point2img_index'] = point2img_index
@@ -389,7 +389,7 @@ class point_image_dataset_mix_semkitti(data.Dataset):
 
         # load 2D data
         image = data['img']
-        depth_image = data['depth_img']
+        # depth_image = data['depth_img']
         proj_matrix = data['proj_matrix']
 
         # project points into image
@@ -470,7 +470,7 @@ class point_image_dataset_mix_semkitti(data.Dataset):
 
             # crop image
             image = image.crop((left, top, right, bottom))
-            depth_image = depth_image.crop((left, top, right, bottom))
+            # depth_image = depth_image.crop((left, top, right, bottom))
             points_img = points_img[keep_idx]
             points_img[:, 0] -= top
             points_img[:, 1] -= left
@@ -483,16 +483,16 @@ class point_image_dataset_mix_semkitti(data.Dataset):
         # 2D augmentation
         if self.color_jitter is not None:
             image = self.color_jitter(image)
-            depth_image = self.color_jitter(depth_image)
+            # depth_image = self.color_jitter(depth_image)
 
         # PIL to numpy
         image = np.array(image, dtype=np.float32, copy=False) / 255.
-        depth_image = np.array(depth_image, dtype=np.float32, copy=False) / 255.
+        # depth_image = np.array(depth_image, dtype=np.float32, copy=False) / 255.
 
         # 2D augmentation
         if np.random.rand() < self.flip2d:
             image = np.ascontiguousarray(np.fliplr(image))
-            depth_image = np.ascontiguousarray(np.fliplr(depth_image))
+            # depth_image = np.ascontiguousarray(np.fliplr(depth_image))
             img_indices[:, 1] = image.shape[1] - 1 - img_indices[:, 1]
 
         # normalize image
@@ -514,7 +514,7 @@ class point_image_dataset_mix_semkitti(data.Dataset):
         data_dict['root'] = root
 
         data_dict['img'] = image
-        data_dict['depth_img'] = depth_image
+        # data_dict['depth_img'] = depth_image
         data_dict['img_indices'] = img_indices
         data_dict['img_label'] = img_label
         data_dict['point2img_index'] = point2img_index
@@ -608,7 +608,6 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         self.image_normalizer = config['dataset_params']['image_normalizer']
         self.laserscaner = LaserScan()
 
-        self.laser_range = config['dataset_params']['laser_range']
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -637,6 +636,7 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         return keep_ind
 
     def __getitem__(self, index):
+        data_dict = {}
         'Generates one sample of data'
         data, root = self.point_cloud_dataset[index]
 
@@ -676,7 +676,7 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
 
         # load 2D data
         image = data['img']
-        depth_image = data['depth_img']
+        # depth_image = data['depth_img']
         proj_matrix = data['proj_matrix']
 
         # project points into image
@@ -726,44 +726,26 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         feat = np.concatenate((xyz, sig), axis=1)
 
         # processing to range image
-        self.laserscaner.open_scan_with_points(xyz, sig)
-        proj_range = self.laserscaner.proj_range # [H, W]
-        proj_xyz = self.laserscaner.proj_xyz # [H, W, 3]
-        proj_remission = self.laserscaner.proj_remission # [H, W]
-        proj_idx = self.laserscaner.proj_idx # [H, W]
-        proj_mask = self.laserscaner.proj_mask # [H, W]
-        proj_x = self.laserscaner.proj_x
-        proj_y = self.laserscaner.proj_y
-
-        proj_idx = proj_idx[:, :, np.newaxis]
-        
-        proj_range = proj_range[:, :, np.newaxis]
-        proj_remission = proj_remission[:, :, np.newaxis]
-        proj_range_img = np.concatenate([proj_xyz, proj_range, proj_remission], 2)
-        proj_range = np.concatenate([proj_range, proj_range, proj_range], 2)
-        proj_remission = np.concatenate([proj_remission, proj_remission, proj_remission], 2)
-        
-        proj_range = cv2.normalize(proj_range, None, 0, 1, cv2.NORM_MINMAX)
-        proj_remission = cv2.normalize(proj_remission, None, 0, 1, cv2.NORM_MINMAX)
-        proj_xyz = cv2.normalize(proj_xyz, None, 0, 1, cv2.NORM_MINMAX)
-        proj_range_img = cv2.normalize(proj_range_img, None, 0, 1, cv2.NORM_MINMAX)
-
-
-        left, top, right, bottom = self.laser_range[0], 0, self.laser_range[1], 64
-
-        proj_range = proj_range[top:bottom, left:right, :]
-        proj_remission = proj_remission[top:bottom, left:right, :]
-        proj_xyz = proj_xyz[top:bottom, left:right, :]
-        proj_range_img = proj_range_img[top:bottom, left:right, :]
+        out_dict = self.laserscaner.open_scan(feat)
+        data_dict['laser_range'] = out_dict['range']
+        data_dict['laser_ori_xyz'] = out_dict['ori_xyz']
+        data_dict['laser_ori_r'] = out_dict['ori_r']
+        data_dict['laser_idx'] = out_dict['idx']
+        data_dict['laser_mask'] = out_dict['mask']
+        data_dict['laser_range_in'] = out_dict['range_in']
+        data_dict['laser_y'] = out_dict['y']
+        data_dict['laser_x'] = out_dict['x']
+        data_dict['laser_points'] = out_dict['points']
 
         ### 2D Augmentation ###
         if self.bottom_crop:
-            # self.bottom_crop is a tuple (crop_width, crop_height)
-            left = int(np.random.rand() * (image.size[0] + 1 - self.bottom_crop[0]))
-            right = left + self.bottom_crop[0]
-            top = image.size[1] - self.bottom_crop[1]
-            bottom = image.size[1]
-
+            # crop image for processing:
+            left = ( image.size[1] - self.bottom_crop[0] ) // 2
+            right = left + self.bottom_crop[0] 
+            top = image.size[0] - self.bottom_crop[1]
+            bottom = image.size[0]
+            
+            # print(' left, right, top, bottom: ',  left, right, top, bottom)
             # update image points
             keep_idx = points_img[:, 0] >= top
             keep_idx = np.logical_and(keep_idx, points_img[:, 0] < bottom)
@@ -771,8 +753,8 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
             keep_idx = np.logical_and(keep_idx, points_img[:, 1] < right)
 
             # crop image
+            # image = image[top:bottom, left:right, :]
             image = image.crop((left, top, right, bottom))
-            depth_image = depth_image.crop((left, top, right, bottom))
             points_img = points_img[keep_idx]
             points_img[:, 0] -= top
             points_img[:, 1] -= left
@@ -785,16 +767,16 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         # 2D augmentation
         if self.color_jitter is not None:
             image = self.color_jitter(image)
-            depth_image = self.color_jitter(depth_image)
+            # depth_image = self.color_jitter(depth_image)
 
         # PIL to numpy
         image = np.array(image, dtype=np.float32, copy=False) / 255.
-        depth_image = np.array(depth_image, dtype=np.float32, copy=False) / 255.
+        # depth_image = np.array(depth_image, dtype=np.float32, copy=False) / 255.
 
         # 2D augmentation
         if np.random.rand() < self.flip2d:
             image = np.ascontiguousarray(np.fliplr(image))
-            depth_image = np.ascontiguousarray(np.fliplr(depth_image))
+            # depth_image = np.ascontiguousarray(np.fliplr(depth_image))
             img_indices[:, 1] = image.shape[1] - 1 - img_indices[:, 1]
 
         # normalize image
@@ -805,7 +787,7 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
             image = (image - mean) / std
             # depth_image = (depth_image - mean) / std
 
-        data_dict = {}
+        
         data_dict['point_feat'] = feat
         data_dict['point_label'] = labels
         data_dict['ref_xyz'] = ref_pc
@@ -817,18 +799,12 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         data_dict['root'] = root
 
         data_dict['img'] = image
-        data_dict['depth_img'] = depth_image
+        # data_dict['depth_img'] = depth_image
         data_dict['img_indices'] = img_indices
         data_dict['img_label'] = img_label
         data_dict['point2img_index'] = point2img_index
 
-        data_dict['proj_xyz'] = proj_xyz
-        data_dict['proj_range'] = proj_range
-        data_dict['proj_remission'] = proj_remission
-        data_dict['proj_range_img'] = proj_range_img
-        data_dict['proj_idx'] = proj_idx
-        data_dict['proj_x'] = proj_x
-        data_dict['proj_y'] = proj_y
+        
 
         return data_dict
 
@@ -1164,10 +1140,10 @@ def collate_fn_default(data):
     path = [d['root'] for d in data]
 
     img = [torch.from_numpy(d['img']) for d in data]
-    depth_img = [torch.from_numpy(d['depth_img']) for d in data]
-    proj_xyz = [torch.from_numpy(d['proj_xyz']) for d in data]
-    proj_range = [torch.from_numpy(d['proj_range']) for d in data]
-    proj_range_img = [torch.from_numpy(d['proj_range_img']) for d in data]
+    laser_range_in = [torch.from_numpy(d['laser_range_in']) for d in data]
+    # proj_xyz = [torch.from_numpy(d['proj_xyz']) for d in data]
+    # proj_range = [torch.from_numpy(d['proj_range']) for d in data]
+    # proj_range_img = [torch.from_numpy(d['proj_range_img']) for d in data]
     # proj_idx = [torch.from_numpy(d['proj_idx']) for d in data]
     img_indices = [d['img_indices'] for d in data]
     img_label = [torch.from_numpy(d['img_label']) for d in data]
@@ -1175,8 +1151,8 @@ def collate_fn_default(data):
     b_idx = []
     coord_x_pad, coord_y_pad = [], []
     for i in range(batch_size):
-        proj_x = data[i]['proj_x'].reshape(-1, 1)
-        proj_y = data[i]['proj_y'].reshape(-1, 1)
+        proj_x = data[i]['laser_x'].reshape(-1, 1)
+        proj_y = data[i]['laser_y'].reshape(-1, 1)
         coor_x = np.concatenate([i*np.ones((proj_x.shape[0], 1)), proj_x], -1)
         coor_y = np.concatenate([i*np.ones((proj_y.shape[0], 1)), proj_y], -1)
         coord_x_pad.append(torch.from_numpy(coor_x))
@@ -1197,11 +1173,11 @@ def collate_fn_default(data):
         'indices': torch.cat(ref_indices).long(),
         'point2img_index': point2img_index,
         'img': torch.stack(img, 0).permute(0, 3, 1, 2),
-        'depth_img': torch.stack(depth_img, 0).permute(0, 3, 1, 2),
-        'proj_xyz': torch.stack(proj_xyz, 0).permute(0, 3, 1, 2),
-        'proj_range': torch.stack(proj_range, 0).permute(0, 3, 1, 2),
-        'proj_range_img': torch.stack(proj_range_img, 0).permute(0, 3, 1, 2),
-        # 'proj_idx': torch.stack(proj_idx, 0).permute(0, 3, 1, 2),
+        # 'depth_img': torch.stack(depth_img, 0).permute(0, 3, 1, 2),
+        # 'proj_xyz': torch.stack(proj_xyz, 0).permute(0, 3, 1, 2),
+        # 'proj_range': torch.stack(proj_range, 0).permute(0, 3, 1, 2),
+        # 'proj_range_img': torch.stack(proj_range_img, 0).permute(0, 3, 1, 2),
+        'laser_range_in': torch.stack(laser_range_in, 0),
         'laser_x': torch.cat(coord_x_pad, 0).long(),
         'laser_y': torch.cat(coord_y_pad, 0).long(),
         'img_indices': img_indices,

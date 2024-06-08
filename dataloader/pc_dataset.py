@@ -220,8 +220,8 @@ class SemanticKITTI_MAE(data.Dataset):
         image = Image.open(image_file)
 
         ###### depth file:
-        depth_image_file = self.im_idx[index].replace('velodyne', 'depth_2').replace('.bin', '.png')
-        depth_img = Image.open(depth_image_file)
+        # depth_image_file = self.im_idx[index].replace('velodyne', 'depth_2').replace('.bin', '.png')
+        # depth_img = Image.open(depth_image_file)
 
         proj_matrix = self.proj_matrix[int(self.im_idx[index][-22:-20])]
 
@@ -233,7 +233,7 @@ class SemanticKITTI_MAE(data.Dataset):
         data_dict['origin_len'] = origin_len
         data_dict['img'] = image
         data_dict['proj_matrix'] = proj_matrix
-        data_dict['depth_img'] = depth_img
+        # data_dict['depth_img'] = depth_img
 
         return data_dict, self.im_idx[index]
 
