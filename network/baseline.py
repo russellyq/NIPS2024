@@ -256,6 +256,7 @@ class get_model_range(LightningBaseModel):
         # data_dict = self.criterion(data_dict)
 
         return data_dict
+
 class criterion(nn.Module):
     def __init__(self, config):
         super(criterion, self).__init__()

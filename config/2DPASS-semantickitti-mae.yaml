@@ -4,7 +4,7 @@ format_version: 1
 ###################
 ## Model options
 model_params:
-  model_architecture: "range2img"
+  model_architecture: "model_range_mae"
 
   input_dims: 4
   spatial_shape:
@@ -16,6 +16,7 @@ model_params:
     - 4
     - 8
     - 16
+  pretrain: True
 
   hiden_size: 64
   num_classes: 20
@@ -36,9 +37,6 @@ dataset_params:
   bottom_crop:
     - 1024
     - 256
-  laser_range:
-    - 406
-    - 630
 
   color_jitter:
     - 0
@@ -81,7 +79,7 @@ dataset_params:
   train_data_loader:
     # data_path: "/media/yanqiao/Seagate Hub/semantic-kitti/dataset/sequences/"
     data_path: "/home/yanqiao/Documents/semantic-kitti/dataset/sequences/"
-    batch_size: 2
+    batch_size: 1
     shuffle: True
     num_workers: 8
     rotate_aug: False
@@ -94,7 +92,7 @@ dataset_params:
     # data_path: "/media/yanqiao/Seagate Hub/semantic-kitti/dataset/sequences/"
     data_path: "/home/yanqiao/Documents/semantic-kitti/dataset/sequences/"
     shuffle: False
-    num_workers: 8
+    num_workers: 1
 
     # normal test
     batch_size: 16
@@ -108,8 +106,8 @@ dataset_params:
 ###################
 ## Train params
 train_params:
-  max_num_epochs: 50
-  learning_rate: 1.5e-4
+  max_num_epochs: 64
+  learning_rate: 0.02e-4
   optimizer: Adam  # [SGD, Adam]
   lr_scheduler: CosineAnnealingWarmRestarts  # [StepLR, ReduceLROnPlateau, CosineAnnealingLR, CosineAnnealingWarmRestarts]
   momentum: 0.9
