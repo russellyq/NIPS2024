@@ -3,6 +3,8 @@ import torch_scatter
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange
+from einops.layers.torch import Rearrange
 
 from network.basic_block import Lovasz_loss
 from network.baseline import get_model as SPVCNN
@@ -33,42 +35,42 @@ class get_model(LightningBaseModel):
 
         self.img_mask_ratio, self.range_mask_ratio = 0, 0
         self.range_image_patch = (8, 128)
-        
 
-        self.decode_layer = [512, 256, 128, 64]
-        self.decoder_pred = nn.ModuleList()
-        for i in range(len(self.decode_layer) - 1):
-            self.decoder_pred.append(
-                nn.Sequential(
-                    nn.Conv2d(self.decode_layer[i] + 5, self.decode_layer[i+1], kernel_size=3, padding=1, bias=False),
-                    nn.BatchNorm2d(self.decode_layer[i+1]),
-                    nn.ReLU(inplace=True),
-                    nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-                    nn.Conv2d(self.decode_layer[i+1], self.decode_layer[i+1], kernel_size=3, padding=1, bias=False),
-                    nn.BatchNorm2d(self.decode_layer[i+1]),
-                    nn.ReLU(inplace=True)
-                )
-            )
-        self.decoder_pred.append(
-            nn.Sequential(
-                nn.Conv2d(64 + 5, config['model_params']['num_classes'], kernel_size=1)
-            )
+        self.scale_factor = (8, 8)
+
+        in_filters = 512
+        out_filters = 512
+        self.conv_upsample = nn.Sequential(
+            nn.Conv2d(in_filters, out_filters * self.scale_factor[0] * self.scale_factor[1], kernel_size=(1, 1)),
+            Rearrange('b (c s0 s1) h w -> b c (h s0) (w s1)', s0=self.scale_factor[0], s1=self.scale_factor[1]),
         )
-
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(out_filters + 5, out_filters, (3, 3), padding=1),
+            nn.LeakyReLU(),
+            nn.BatchNorm2d(out_filters)
+        )
+        self.conv_output = nn.Sequential(
+             nn.Conv2d(out_filters, out_filters, kernel_size=(1, 1)),
+            nn.LeakyReLU(),
+            nn.BatchNorm2d(out_filters),
+        )
+        self.conv_head = nn.Conv2d(out_filters, config['model_params']['num_classes'], kernel_size=1)
         self.criterion = criterion(config)
         
-    
     def _init_mae_(self, pretrain=False):
         if pretrain:
             self.mae.load_params_from_file('/home/yanqiao/OpenPCDet/output/semantic_kitti_models/MAE/checkpoints/checkpoint_epoch_100.pth', None)
             print('Loaded MAE from pre-trained weights')
-            # for param in self.mae.parameters():
+
+            # for param in self.mae.image_encoder.parameters():
             #     param.requires_grad = False
+            # for param in self.mae.range_encoder.decoder_blocks.parameters():
+            #     param.requires_grad = False
+            for param in self.mae.parameters():
+                param.requires_grad = False
         else:
             print('vanilla training !')
 
-    
-    
     def forward_decode(self, x, ids_restore, x_mm, \
                         decoder_embed, \
                         mask_token, \
@@ -85,20 +87,18 @@ class get_model(LightningBaseModel):
         x = x + decoder_pos_embed # (B, L2+1, D)
         x = x + x_mm
         # x = x[:, 1:, :].reshape(B, self.range_image_patch[0], self.range_image_patch[1], D).permute(0, 3, 1, 2).contiguous()
-        # apply Transformer blocks
-        for blk in self.mae.range_encoder.decoder_blocks:
-            x = blk(x)
+
 
         # (B, L2+1, D)
         x = x[:, 1:, :].reshape(B, self.range_image_patch[0], self.range_image_patch[1], D).permute(0, 3, 1, 2).contiguous()
         laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()
-        for i in range(len(self.decode_layer) - 1):
-            sample_size = (self.range_image_patch[0] * 2**(i), self.range_image_patch[1] * 2**(i))
-            laser_range_x = torch.nn.functional.interpolate(laser_range_in, size=sample_size, mode='bilinear')
-            x = torch.cat([x, laser_range_x], 1)
-            x = self.decoder_pred[i](x)
-        x = torch.cat([x, laser_range_in], 1)
-        return self.decoder_pred[-1](x)
+
+        x = self.conv_upsample(x)
+        x = self.conv1( torch.cat( [x, laser_range_in], 1))
+        x = self.conv_output(x)
+        x = self.conv_head(x)
+        
+        return x
     
     def forward_loss(self, pred, batch_dict):
         laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()
