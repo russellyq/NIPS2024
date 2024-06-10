@@ -12,6 +12,7 @@ from network.mae import MAE
 from torch.autograd import Variable
 from network.baseline import criterion
 
+from timm.models.vision_transformer import Block, Mlp
 
 class get_model(LightningBaseModel):
     def __init__(self, config):
@@ -32,25 +33,41 @@ class get_model(LightningBaseModel):
 
         self.img_mask_ratio, self.range_mask_ratio = 0, 0
         self.range_image_patch = (8, 128)
-        decode_layer = [512, 256, 128, 64]
-        self.decoder_pred = nn.ModuleList()
-        for i in range(len(decode_layer) - 1):
-            self.decoder_pred.append(
-                nn.Sequential(
-                    nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-                    nn.Conv2d(decode_layer[i], decode_layer[i+1], kernel_size=3, padding=1, bias=False),
-                    nn.BatchNorm2d(decode_layer[i+1]),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(decode_layer[i+1], decode_layer[i+1], kernel_size=3, padding=1, bias=False),
-                    nn.BatchNorm2d(decode_layer[i+1]),
-                    nn.ReLU(inplace=True)
-                )
+        
+        depth = 12
+        num_heads=16
+        mlp_ratio=4.
+        norm_layer=nn.LayerNorm
+        embed_dim = 512
+        in_dim= 8 * 8 * 20
+        self.decoder_blocks = nn.ModuleList([
+            # Mlp(in_features=embed_dim, out_features=in_dim)
+            nn.Linear(embed_dim, in_dim, bias=True)
+        ])
+        for _ in range(depth):
+            self.decoder_blocks.append(
+                Block(in_dim, num_heads, mlp_ratio, qkv_bias=True, qk_scale=None, norm_layer=norm_layer)
             )
-        self.decoder_pred.append(
-            nn.Sequential(
-                nn.Conv2d(64, config['model_params']['num_classes'], kernel_size=1)
-            )
-        )
+        self.decoder_blocks.append(nn.Linear(in_dim, in_dim, bias=True))
+        # decode_layer = [512, 256, 128, 64]
+        # self.decoder_pred = nn.ModuleList()
+        # for i in range(len(decode_layer) - 1):
+        #     self.decoder_pred.append(
+        #         nn.Sequential(
+        #             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+        #             nn.Conv2d(decode_layer[i], decode_layer[i+1], kernel_size=3, padding=1, bias=False),
+        #             nn.BatchNorm2d(decode_layer[i+1]),
+        #             nn.ReLU(inplace=True),
+        #             nn.Conv2d(decode_layer[i+1], decode_layer[i+1], kernel_size=3, padding=1, bias=False),
+        #             nn.BatchNorm2d(decode_layer[i+1]),
+        #             nn.ReLU(inplace=True)
+        #         )
+        #     )
+        # self.decoder_pred.append(
+        #     nn.Sequential(
+        #         nn.Conv2d(64, config['model_params']['num_classes'], kernel_size=1)
+        #     )
+        # )
         self.criterion = criterion(config)
         
     
@@ -58,6 +75,8 @@ class get_model(LightningBaseModel):
         if pretrain:
             self.mae.load_params_from_file('/home/yanqiao/OpenPCDet/output/semantic_kitti_models/MAE/checkpoints/checkpoint_epoch_100.pth', None)
             print('Loaded MAE from pre-trained weights')
+            for param in self.mae.parameters():
+                param.requires_grad = False
         else:
             print('vanilla training !')
 
@@ -78,11 +97,11 @@ class get_model(LightningBaseModel):
         # add pos embed
         x = x + decoder_pos_embed # (B, L2+1, D)
         x = x + x_mm
-        x = x[:, 1:, :].reshape(B, self.range_image_patch[0], self.range_image_patch[1], D).permute(0, 3, 1, 2).contiguous()
+        # x = x[:, 1:, :].reshape(B, self.range_image_patch[0], self.range_image_patch[1], D).permute(0, 3, 1, 2).contiguous()
         # apply Transformer blocks
-        for blk in self.decoder_pred:
+        for blk in self.decoder_blocks:
             x = blk(x)
-        return x
+        return x[:, 1:, :]
     
     def forward_loss(self, pred, batch_dict):
         laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()
@@ -125,12 +144,14 @@ class get_model(LightningBaseModel):
         img_token_2_range = torch.cat([img_latent_full_cls, img_token_2_range], 1)
 
         
-
         range_pred = self.forward_decode(range_latent_full, range_ids_restore_full, img_token_2_range,
                                         self.mae.range_encoder.decoder_embed,
                                         self.mae.range_encoder.mask_token,
                                         self.mae.range_encoder.decoder_pos_embed,
                                         )
+        range_pred = range_pred.reshape(shape=(range_pred.shape[0], self.range_image_patch[0], self.range_image_patch[1], 8, 8, 20))
+        range_pred = torch.einsum('nhwpqc->nchpwq', range_pred)
+        range_pred = range_pred.reshape(shape=(range_pred.shape[0], 20, self.range_image_patch[0] * 8, self.range_image_patch[1] * 8))
         
         batch_dict['loss'] = 0.
         laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()
