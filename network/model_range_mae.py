@@ -27,34 +27,27 @@ class get_model(LightningBaseModel):
         self.lambda_xm = config.train_params.lambda_xm
         self.scale_list = config.model_params.scale_list
         self.num_scales = len(self.scale_list)
+        self.config = config
 
-        self.mae = MAE()
+        self.mae = MAE(config['model_params']['mae_parameters'])
         self._init_mae_(config.model_params.pretrain)
         self.img_size = (256, 1024)
         self.range_img_size = (64, 1024)
 
         self.img_mask_ratio, self.range_mask_ratio = 0, 0
-        self.range_image_patch = (8, 128)
+        self.range_image_patch = (32, 128)
 
-        self.scale_factor = (8, 8)
+        self.scale_factor = (2, 8)
 
         in_filters = 512
-        out_filters = 512
-        self.conv_upsample = nn.Sequential(
-            nn.Conv2d(in_filters, out_filters * self.scale_factor[0] * self.scale_factor[1], kernel_size=(1, 1)),
-            Rearrange('b (c s0 s1) h w -> b c (h s0) (w s1)', s0=self.scale_factor[0], s1=self.scale_factor[1]),
-        )
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(out_filters + 5, out_filters, (3, 3), padding=1),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(out_filters)
-        )
-        self.conv_output = nn.Sequential(
-             nn.Conv2d(out_filters, out_filters, kernel_size=(1, 1)),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(out_filters),
-        )
-        self.conv_head = nn.Conv2d(out_filters, config['model_params']['num_classes'], kernel_size=1)
+        mlp_ratio = 4.
+        norm_layer = nn.LayerNorm
+        self.decoder_blocks = nn.ModuleList([
+            Block(config['model_params']['decode_seg_dim'], config['model_params']['decode_seg_head'], mlp_ratio, qkv_bias=True, qk_scale=None, norm_layer=norm_layer)
+            for i in range(config['model_params']['decode_seg_depth'])])
+        
+        self.decoder_pred = nn.Linear(in_filters * config['model_params']['decode_seg_depth'], self.scale_factor[0]* self.scale_factor[1] * config['model_params']['num_classes'], bias=True) # decoder to patch
+        
         self.criterion = criterion(config)
         
     def _init_mae_(self, pretrain=False):
@@ -66,8 +59,8 @@ class get_model(LightningBaseModel):
             #     param.requires_grad = False
             # for param in self.mae.range_encoder.decoder_blocks.parameters():
             #     param.requires_grad = False
-            for param in self.mae.parameters():
-                param.requires_grad = False
+            # for param in self.mae.parameters():
+            #     param.requires_grad = False
         else:
             print('vanilla training !')
 
@@ -90,14 +83,20 @@ class get_model(LightningBaseModel):
 
 
         # (B, L2+1, D)
-        x = x[:, 1:, :].reshape(B, self.range_image_patch[0], self.range_image_patch[1], D).permute(0, 3, 1, 2).contiguous()
-        laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()
-
-        x = self.conv_upsample(x)
-        x = self.conv1( torch.cat( [x, laser_range_in], 1))
-        x = self.conv_output(x)
-        x = self.conv_head(x)
+        # x = x[:, 1:, :].reshape(B, self.range_image_patch[0], self.range_image_patch[1], D).permute(0, 3, 1, 2).contiguous()
+        # laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()
+        x_out = []
+        for blk in self.decoder_blocks:
+            x = blk(x)
+            x_out.append(x)
         
+        x_out = torch.cat(x_out, -1)
+        x = self.decoder_pred(x_out)
+        h, w = self.range_image_patch # (32, 128)
+        p1, p2 = self.scale_factor # (2, 8)
+        x = x[:, 1:, :].reshape(shape=( x.shape[0], h, w , p1, p2, self.config['model_params']['num_classes']))
+        x = torch.einsum('nhwpqc->nchpwq', x)
+        x = x.reshape(shape= (x.shape[0], self.config['model_params']['num_classes'], h*p1, w*p2))
         return x
     
     def forward_loss(self, pred, batch_dict):
@@ -147,9 +146,9 @@ class get_model(LightningBaseModel):
                                         self.mae.range_encoder.decoder_pos_embed,
                                         batch_dict
                                         )
-        range_pred = range_pred.reshape(shape=(range_pred.shape[0], self.range_image_patch[0], self.range_image_patch[1], 8, 8, 20))
+        range_pred = range_pred.reshape(shape=(range_pred.shape[0], self.range_image_patch[0], self.range_image_patch[1], self.scale_factor[0], self.scale_factor[1], 20))
         range_pred = torch.einsum('nhwpqc->nchpwq', range_pred)
-        range_pred = range_pred.reshape(shape=(range_pred.shape[0], 20, self.range_image_patch[0] * 8, self.range_image_patch[1] * 8))
+        range_pred = range_pred.reshape(shape=(range_pred.shape[0], 20, self.range_image_patch[0] * self.scale_factor[0], self.range_image_patch[1] * self.scale_factor[1]))
         
         batch_dict['loss'] = 0.
         laser_range_in = batch_dict['laser_range_in'].permute(0,3,1,2).contiguous()

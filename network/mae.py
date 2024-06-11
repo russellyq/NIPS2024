@@ -5,22 +5,33 @@ import torch.nn as nn
 import numpy as np
 
 from pcdet.utils.spconv_utils import find_all_spconv_keys
-from network.model_mae import mae_vit_base_patch16, mae_vit_large_patch16, mae_vit_huge_patch14, mae_vit_large_patch8, MaskedAutoencoderViT
+from network.model_mae import mae_vit_small_patch16, mae_vit_base_patch16, mae_vit_large_patch16, mae_vit_huge_patch14, mae_vit_large_patch8, MaskedAutoencoderViT
 from torch.autograd import Variable
+from timm.models.vision_transformer import Block
 
 class MAE(nn.Module):
-    def __init__(self):
+    def __init__(self, config):
         super().__init__()
         
         self.range_mask_ratio, self.img_mask_ratio = 0.75, 0.75
         self.img_size = (256, 1024)
         self.range_img_size = (64, 1024)
 
-        self.image_encoder = mae_vit_large_patch16(in_chans=3, img_with_size=self.img_size, out_chans=3, with_patch_2d=False)
-        self.range_encoder = mae_vit_large_patch16(in_chans=5, img_with_size=self.range_img_size, out_chans=5, with_patch_2d=(8, 8))
+        self.image_encoder = MaskedAutoencoderViT(
+            patch_size=16, embed_dim=config['embed_dim'], depth=config['depth'], num_heads=config['num_heads'],
+            decoder_embed_dim=config['decoder_embed_dim'], decoder_depth=config['decoder_depth'], decoder_num_heads=config['decoder_num_heads'],
+            mlp_ratio=4, norm_layer=nn.LayerNorm, in_chans=3, img_with_size=self.img_size, out_chans=3, with_patch_2d=False, norm_pix_loss=True
+        )
+        
+        self.range_encoder = MaskedAutoencoderViT(
+            patch_size=16, embed_dim=config['embed_dim'], depth=config['depth'], num_heads=config['num_heads'],
+            decoder_embed_dim=config['decoder_embed_dim'], decoder_depth=config['decoder_depth'], decoder_num_heads=config['decoder_num_heads'],
+            mlp_ratio=4, norm_layer=nn.LayerNorm, in_chans=5, img_with_size=self.range_img_size, out_chans=5, with_patch_2d=(2, 8), norm_pix_loss=True
+        )
 
         self.img_patch_size = (self.image_encoder.patch_embed.patch_size[0], self.image_encoder.patch_embed.patch_size[1])
         self.range_patch_size = (self.range_encoder.patch_embed.patch_size[0], self.range_encoder.patch_embed.patch_size[1])
+
 
 
 
@@ -75,16 +86,20 @@ class MAE(nn.Module):
 
         # color image encoding
         img_latent, img_mask, img_ids_restore = self.image_encoder.forward_encoder(images, self.img_mask_ratio)
-        img_latent_full, img_mask_full, img_ids_restore_full = self.image_encoder.forward_encoder(images, 0)
+        # img_latent_full, img_mask_full, img_ids_restore_full = self.image_encoder.forward_encoder(images, 0)
         # img_latent: (B, L=H*W / 16 / 16 * (1-mask_ratio) + 1=256+1=257, C=1024)
         # img_mask: (B, L=H*W/16/16=1024)   # 0 is keep, 1 is remove
         # img_ids_restore: (B, L=H*W/16/16=1024)
 
         range_latent, range_mask, range_ids_restore = self.range_encoder.forward_encoder(laser_range_in, self.range_mask_ratio)
-        range_latent_full, range_mask_full, range_ids_restore_full = self.range_encoder.forward_encoder(laser_range_in, 0)
+        # range_latent_full, range_mask_full, range_ids_restore_full = self.range_encoder.forward_encoder(laser_range_in, 0)
 
-        img_latent_full_cls, img_mask_full_tokens_cls_unpatch, range_latent_full_cls, range_mask_full_tokens_cls_unpatch = self.forward_patchfy_unpatchfy_img_range(img_latent_full, img_mask_full, img_ids_restore_full,
-                                                                                                                        range_latent_full, range_mask_full, range_ids_restore_full)
+        # img_latent_full_cls, img_mask_full_tokens_cls_unpatch, range_latent_full_cls, range_mask_full_tokens_cls_unpatch = self.forward_patchfy_unpatchfy_img_range(img_latent_full, img_mask_full, img_ids_restore_full,
+        #                                                                                                                 range_latent_full, range_mask_full, range_ids_restore_full)
+
+        img_latent_full_cls, img_mask_full_tokens_cls_unpatch, range_latent_full_cls, range_mask_full_tokens_cls_unpatch = self.forward_patchfy_unpatchfy_img_range(img_latent, img_mask, img_ids_restore,
+                                                                                                                        range_latent, range_mask, range_ids_restore)
+        
         # (B, h_img=256/16=64/4, w_img/1024/16=1024/16, D)
         # range image 384:640 correspond to img (24:, 40)
 
@@ -121,8 +136,8 @@ class MAE(nn.Module):
                                         self.range_encoder.decoder_norm,
                                         self.range_encoder.decoder_pred)   
 
-        img_loss, img_acc = self.image_encoder.forward_loss(images, img_pred, img_mask)
-        range_loss, range_acc = self.range_encoder.forward_loss(laser_range_in, range_pred, range_mask, patch_size=(4, 16))
+        img_loss = self.image_encoder.forward_loss(images, img_pred, img_mask)
+        range_loss = self.range_encoder.forward_loss(laser_range_in, range_pred, range_mask, patch_size=(4, 16))
 
         loss = range_loss + img_loss
 
@@ -148,7 +163,6 @@ class MAE(nn.Module):
             pred_dicts['im_masked'] = pred_dicts['img_raw'] * (1 - pred_dicts['img_mask'])
             pred_dicts['im_paste'] = pred_dicts['im_masked'] + pred_dicts['img_pred'] * pred_dicts['img_mask']
 
-            pred_dicts['range_acc'] = range_acc.detach().cpu().numpy()
 
             pred_dicts['range_pred'] = self.range_encoder.unpatchify(range_pred, h=8, w=128, C=5).permute(0,2,3,1).squeeze(0).detach().cpu().numpy()
             pred_dicts['range_mask'] = self.range_encoder.unpatchify(range_mask.unsqueeze(-1).repeat(1, 1, self.range_encoder.patch_embed.patch_size[0]**2 *5), h=8, w=128, C=5).permute(0,2,3,1).squeeze(0).detach().cpu().numpy()

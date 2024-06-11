@@ -115,3 +115,5 @@ train_params:
   lambda_seg2d: 1
   lambda_xm: 0.05
   lambda_lovasz: 1
+
+  
