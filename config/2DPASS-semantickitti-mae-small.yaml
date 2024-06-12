@@ -23,14 +23,17 @@ model_params:
   backbone_2d: resnet34
   pretrained2d: False
 
-  decode_seg_depth: 4
-  decode_seg_dim: 512
-  decode_seg_head: 8
-  # Vit small
+  # ATM head for seg
+  decode_seg_nlayers: 3
+  decode_seg_dim: 384
+  decode_seg_nhead: 12
+  use_stages: 3
+  # MAE small
   mae_parameters:
     embed_dim: 384
     depth: 12
     num_heads: 6
+    # MAE decoder
     decoder_embed_dim: 512
     decoder_depth: 4
     decoder_num_heads: 8

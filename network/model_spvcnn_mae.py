@@ -29,8 +29,9 @@ class get_model(LightningBaseModel):
         self.num_scales = len(self.scale_list)
 
         self.img_size = (256, 1024)
+        self.img_mask_ratio = 0
 
-        self.spvcnn_mae = SPVCNN_MAE(None, None, None, sample_points=False)
+        self.spvcnn_mae = SPVCNN_MAE(config['model_params']['mae_parameters'], sample_points=False)
         
         self.criterion = criterion(config)
 
@@ -55,16 +56,18 @@ class get_model(LightningBaseModel):
             print('vanilla training !')
 
     def forward(self, batch_dict):
-
+        batch_dict['spconv_points'] = batch_dict['points']
         raw_images = batch_dict['img']
         # B = batch_dict['batch_size']
         Batch_size, _, H_raw, W_raw = raw_images.size() # (256, 1024)
         images = torch.nn.functional.interpolate(raw_images, size=self.img_size, mode='bilinear')
 
         # color image encoding
-        img_latent_full, img_mask_full, img_ids_restore_full = self.spvcnn_mae.image_encoder.forward_encoder(images, 0)
-        img_latent_full = self.spvcnn_mae.img_conv(img_latent_full)
-        # (B, L=, C=)
+        img_latent, img_mask, img_ids_restore = self.spvcnn_mae.image_encoder.forward_encoder(images, self.img_mask_ratio)
+        # img_latent_full, img_mask_full, img_ids_restore_full = self.image_encoder.forward_encoder(images, 0)
+        img_latent_full = self.forward_decoder_img(img_latent, img_ids_restore)
+        img_latent_full = self.img_conv(img_latent_full.reshape(Batch_size, self.img_size[0]//self.scale_factor[0], self.img_size[1]//self.scale_factor[1], -1).permute(0, 3, 1, 2).contiguous())
+        # img_latent_full: (B, C, H, W)
 
         # spvcnn:
         batch_dict = self.spvcnn_mae.pc_encoder(batch_dict)
