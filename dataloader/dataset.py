@@ -11,6 +11,7 @@ from torchvision import transforms as T
 from pyquaternion import Quaternion
 from nuscenes.utils.geometry_utils import view_points
 from .laserscan import LaserScan
+from scipy.spatial.ckdtree import cKDTree as kdtree
 
 REGISTERED_DATASET_CLASSES = {}
 REGISTERED_COLATE_CLASSES = {}
@@ -737,6 +738,14 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         data_dict['laser_x'] = out_dict['x']
         data_dict['laser_points'] = out_dict['points']
 
+        points_xyz = out_dict['points']
+        # print('points_xyz:,', points_xyz.shape)
+        tree = kdtree(points_xyz)
+        _, knns = tree.query(points_xyz, k=7)
+
+        data_dict['knns'] = knns
+        data_dict['num_points'] = points_xyz.shape[0]
+
         ### 2D Augmentation ###
         if self.bottom_crop:
             # crop image for processing:
@@ -1161,6 +1170,9 @@ def collate_fn_default(data):
     points = [torch.from_numpy(d['point_feat']) for d in data]
     ref_xyz = [torch.from_numpy(d['ref_xyz']) for d in data]
     labels = [torch.from_numpy(d['point_label']) for d in data]
+    knns = [torch.from_numpy(d['knns']) for d in data]
+
+    num_points = [d['num_points'] for d in data]
 
     return {
         'points': torch.cat(points).float(),
@@ -1173,6 +1185,8 @@ def collate_fn_default(data):
         'indices': torch.cat(ref_indices).long(),
         'point2img_index': point2img_index,
         'img': torch.stack(img, 0).permute(0, 3, 1, 2),
+        'knns': torch.cat(knns, 0),
+        'num_points': torch.LongTensor(num_points),
         # 'depth_img': torch.stack(depth_img, 0).permute(0, 3, 1, 2),
         # 'proj_xyz': torch.stack(proj_xyz, 0).permute(0, 3, 1, 2),
         # 'proj_range': torch.stack(proj_range, 0).permute(0, 3, 1, 2),

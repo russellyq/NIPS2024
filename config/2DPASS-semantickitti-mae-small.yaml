@@ -28,6 +28,7 @@ model_params:
   decode_seg_dim: 384
   decode_seg_nhead: 12
   use_stages: 3
+  skip_filters: 128
   # MAE small
   mae_parameters:
     embed_dim: 384
@@ -38,6 +39,8 @@ model_params:
     decoder_depth: 4
     decoder_num_heads: 8
     mlp_ratio: 4
+    skip_filters: 128
+    num_classes: 20
 
 
 ###################
@@ -112,7 +115,7 @@ dataset_params:
     num_workers: 2
 
     # normal test
-    batch_size: 2
+    batch_size: 1
     rotate_aug: False
     flip_aug: False
     scale_aug: False

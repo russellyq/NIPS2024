@@ -13,9 +13,9 @@ from functools import partial
 
 import torch
 import torch.nn as nn
-
+from network.stem import ConvStem
 from timm.models.vision_transformer import PatchEmbed, Block, PatchEmbedWithSize, PatchEmbedWithSize_2D
-
+from network.stem import ConvStem
 # from torchmetrics.functional import multiscale_structural_similarity_index_measure
 
 # from torchmetrics.image import MultiScaleStructuralSimilarityIndexMeasure
@@ -123,16 +123,23 @@ class MaskedAutoencoderViT(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, out_chans=3, 
                  embed_dim=1024, depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, img_with_size=(64, 224), with_patch_2d=False):
+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, img_with_size=(64, 224), with_patch_2d=False, patch_model='PatchEmbedWithSize', hidden_dim=128):
         super().__init__()
-
+        self.patch_model = patch_model
         # --------------------------------------------------------------------------
         # MAE encoder specifics
         # self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
-        if with_patch_2d:
-            self.patch_embed = PatchEmbedWithSize_2D(patch_size=with_patch_2d, in_chans=in_chans, embed_dim=embed_dim, img_with_size=img_with_size)
-        else:
+        if patch_model=='PatchEmbedWithSize':
             self.patch_embed = PatchEmbedWithSize(patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, img_with_size=img_with_size)
+        elif patch_model=='PatchEmbedWithSize_2D':
+            self.patch_embed = PatchEmbedWithSize_2D(patch_size=with_patch_2d, in_chans=in_chans, embed_dim=embed_dim, img_with_size=img_with_size)
+        elif patch_model=='ConvStem':
+            self.patch_embed = ConvStem(in_channels=in_chans, base_channels=32, img_size=img_with_size,
+                 patch_stride=with_patch_2d,
+                 embed_dim=embed_dim,
+                 flatten=True,
+                 hidden_dim=hidden_dim)
+            
         
         num_patches = self.patch_embed.num_patches
 
@@ -180,8 +187,8 @@ class MaskedAutoencoderViT(nn.Module):
         self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
 
         # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
-        w = self.patch_embed.proj.weight.data
-        torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        # w = self.patch_embed.proj_block.weight.data
+        # torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
         # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
         torch.nn.init.normal_(self.cls_token, std=.02)
@@ -190,12 +197,12 @@ class MaskedAutoencoderViT(nn.Module):
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
-        # model_checkpoint= torch.load('/home/yanqiao/2DPASS/pretrained/mae_pretrain_vit_large.pth')
-        # model_state_dict = model_checkpoint['model']
-        # for param in self.state_dict():
-        #     if param in model_state_dict and self.state_dict()[param].size() == model_state_dict[param].size():
-        #         self.state_dict()[param] = model_state_dict[param]
-        #         print('initing with param: ', param)
+        model_checkpoint= torch.load('/home/yanqiao/2DPASS/pretrained/mae_pretrain_vit_base.pth')
+        model_state_dict = model_checkpoint['model']
+        for param in self.state_dict():
+            if param in model_state_dict and self.state_dict()[param].size() == model_state_dict[param].size():
+                self.state_dict()[param] = model_state_dict[param]
+                print('initing with param: ', param)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -268,7 +275,10 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward_encoder(self, x, mask_ratio):
         # embed patches
-        x = self.patch_embed(x) # (B, L=1024=H*W/16/16, C=1024)
+        skip = None
+        if self.patch_model == 'ConvStem':
+            x, skip = self.patch_embed(x) # (B, L=1024=H*W/16/16, C=1024)
+        else: x = self.patch_embed(x)
 
         # add pos embed w/o cls token
         x = x + self.pos_embed[:, 1:, :] # (B, L=1024=H*W/16/16, C=1024)
@@ -289,7 +299,7 @@ class MaskedAutoencoderViT(nn.Module):
             x = blk(x)
         x = self.norm(x)
 
-        return x, mask, ids_restore
+        return x, mask, ids_restore, skip
 
     def forward_decoder(self, x, ids_restore): # x, ids_restore: (B, L1=H*W/16/16*(1-mask_ratio)+1=257, C) , (B, L2=H*W/16/16=1024)
         # embed tokens
@@ -349,7 +359,7 @@ class MaskedAutoencoderViT(nn.Module):
         # print('imgs: ', imgs.size())
         # print('range_imgs: ', range_imgs.size())
         
-        latent, mask, ids_restore = self.forward_encoder(range_imgs, mask_ratio)
+        latent, mask, ids_restore, _ = self.forward_encoder(range_imgs, mask_ratio)
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
 
         pred_img = self.unpatchify(pred, h=16, w=64)
