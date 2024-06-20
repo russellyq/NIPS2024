@@ -12,6 +12,31 @@ from pyquaternion import Quaternion
 from nuscenes.utils.geometry_utils import view_points
 from .laserscan import LaserScan
 from scipy.spatial.ckdtree import cKDTree as kdtree
+import random
+
+def make_random_range_mask(patch_size_h=2, patch_size_w=8, H=64, W=2048, mask_ratio=0.75):
+    t_or_f_h = []
+    for i in range(H // patch_size_h):
+        t_or_f_w = []
+        t_or_f = []
+        w_mask_len = int( ( W // patch_size_w ) * mask_ratio)
+        w_unmask_len = int( ( W // patch_size_w ) * ( 1 - mask_ratio ))
+        for i in range(w_mask_len):
+            t_or_f.append(False)
+        for i in range(w_unmask_len):
+            t_or_f.append(True)
+        
+        random.shuffle(t_or_f) # (256)
+        t_or_f = np.asarray(t_or_f) # () # (256)
+        t_or_f = t_or_f.repeat(patch_size_w) # (2048)
+        t_or_f = t_or_f.reshape(1, -1) # (1, 2048)
+        for i in range(patch_size_h):
+            t_or_f_w.append(t_or_f)
+        t_or_f_w = np.concatenate(t_or_f_w, axis=0) # (2, 2048)
+        
+        t_or_f_h.append(t_or_f_w)
+    t_or_f_h = np.concatenate(t_or_f_h, axis=0)
+    return t_or_f_h
 
 REGISTERED_DATASET_CLASSES = {}
 REGISTERED_COLATE_CLASSES = {}
@@ -79,7 +104,7 @@ class point_image_dataset_semkitti(data.Dataset):
         self.color_jitter = T.ColorJitter(*color_jitter) if color_jitter else None
         self.flip2d = config['dataset_params']['flip2d']
         self.image_normalizer = config['dataset_params']['image_normalizer']
-        self.laserscaner = LaserScan()
+        # self.laserscaner = LaserScan()
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -216,7 +241,6 @@ class point_image_dataset_semkitti(data.Dataset):
         proj_remission = cv2.normalize(proj_remission, None, 0, 1, cv2.NORM_MINMAX)
         proj_xyz = cv2.normalize(proj_xyz, None, 0, 1, cv2.NORM_MINMAX)
         proj_range_img = cv2.normalize(proj_range_img, None, 0, 1, cv2.NORM_MINMAX)
-
         ### 2D Augmentation ###
         if self.bottom_crop:
             # self.bottom_crop is a tuple (crop_width, crop_height)
@@ -607,7 +631,7 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         self.color_jitter = T.ColorJitter(*color_jitter) if color_jitter else None
         self.flip2d = config['dataset_params']['flip2d']
         self.image_normalizer = config['dataset_params']['image_normalizer']
-        self.laserscaner = LaserScan()
+        self.laserscaner = LaserScan(H=64, W=2048, fov_up=3.0, fov_down=-25.0)
 
 
     def __len__(self):
@@ -692,6 +716,7 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         img_points = np.fliplr(img_points)
         points_img = img_points[keep_idx_img_pts]
 
+
         ### 3D Augmentation ###
         # random data augmentation by rotation
         if self.rotate_aug:
@@ -745,16 +770,15 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
 
         data_dict['knns'] = knns
         data_dict['num_points'] = points_xyz.shape[0]
-
         ### 2D Augmentation ###
         if self.bottom_crop:
             # crop image for processing:
-            left = ( image.size[1] - self.bottom_crop[0] ) // 2
+            # left = ( image.size[0] - self.bottom_crop[0] ) // 2
+            left = int(np.random.rand() * (image.size[0] + 1 - self.bottom_crop[0]))
             right = left + self.bottom_crop[0] 
-            top = image.size[0] - self.bottom_crop[1]
-            bottom = image.size[0]
+            top = image.size[1] - self.bottom_crop[1]
+            bottom = image.size[1]
             
-            # print(' left, right, top, bottom: ',  left, right, top, bottom)
             # update image points
             keep_idx = points_img[:, 0] >= top
             keep_idx = np.logical_and(keep_idx, points_img[:, 0] < bottom)
@@ -796,7 +820,6 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
             image = (image - mean) / std
             # depth_image = (depth_image - mean) / std
 
-        
         data_dict['point_feat'] = feat
         data_dict['point_label'] = labels
         data_dict['ref_xyz'] = ref_pc
@@ -813,7 +836,13 @@ class point_image_dataset_range_mae_kitti(data.Dataset):
         data_dict['img_label'] = img_label
         data_dict['point2img_index'] = point2img_index
 
+        t_or_f_range_img = make_random_range_mask(mask_ratio=0)
         
+        t_or_f_point = t_or_f_range_img[out_dict['y'].astype(np.int16), out_dict['x'].astype(np.int16)]
+        data_dict['sample_points'] = feat[t_or_f_point]
+        data_dict['sample_index'] = np.arange(len(feat))[t_or_f_point]
+        data_dict['unsample_index'] = np.arange(len(feat))[np.invert(t_or_f_point)]
+        data_dict['spconv_points'] = feat
 
         return data_dict
 
@@ -1167,7 +1196,22 @@ def collate_fn_default(data):
         coord_x_pad.append(torch.from_numpy(coor_x))
         coord_y_pad.append(torch.from_numpy(coor_y))
         b_idx.append(torch.ones(point_num[i]) * i)
+    
+    sample_idx = [torch.from_numpy(d['sample_index'].astype(np.int)) for d in data]
+    coors_sample, coors_spconv = [], []
+    batch_idx_sample = []
+    for i in range(batch_size):
+        coor_sample_points = data[i]['sample_points']
+        coor_spconv_points = data[i]['spconv_points']
+        batch_idx_sample.append(torch.ones(len(coor_spconv_points)) * i)
+        coor_pad_sample = np.pad(coor_sample_points, ((0,0), (1,0)), mode='constant', constant_values=i)
+        coor_pad_spconv = np.pad(coor_spconv_points, ((0,0), (1,0)), mode='constant', constant_values=i)
+        coors_sample.append(torch.from_numpy(coor_pad_sample))
+        coors_spconv.append(torch.from_numpy(coor_pad_spconv))
+    
     points = [torch.from_numpy(d['point_feat']) for d in data]
+    spconv_points = [torch.from_numpy(d['spconv_points']) for d in data]
+    sample_points = [torch.from_numpy(d['sample_points']) for d in data]
     ref_xyz = [torch.from_numpy(d['ref_xyz']) for d in data]
     labels = [torch.from_numpy(d['point_label']) for d in data]
     knns = [torch.from_numpy(d['knns']) for d in data]
@@ -1175,9 +1219,15 @@ def collate_fn_default(data):
     num_points = [d['num_points'] for d in data]
 
     return {
+        'sample_points_batch_idx': torch.cat(coors_sample, 0),
+        'spconv_points_batch_idx': torch.cat(coors_spconv, 0),
+
         'points': torch.cat(points).float(),
+        'spconv_points': torch.cat(spconv_points).float(),
+        'sample_points': torch.cat(sample_points).float(),
         'ref_xyz': torch.cat(ref_xyz).float(),
         'batch_idx': torch.cat(b_idx).long(),
+        'batch_idx_sample': torch.cat(batch_idx_sample).long(),
         'batch_size': batch_size,
         'labels': torch.cat(labels).long().squeeze(1),
         'raw_labels': torch.from_numpy(ref_labels).long(),
@@ -1195,8 +1245,10 @@ def collate_fn_default(data):
         'laser_x': torch.cat(coord_x_pad, 0).long(),
         'laser_y': torch.cat(coord_y_pad, 0).long(),
         'img_indices': img_indices,
+        'points_img': img_indices,
         'img_label': torch.cat(img_label, 0).squeeze(1).long(),
         'path': path,
+        'sample_index': sample_idx,
     }
 
 

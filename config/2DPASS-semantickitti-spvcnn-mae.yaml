@@ -35,6 +35,7 @@ model_params:
     decoder_depth: 4
     decoder_num_heads: 8
     mlp_ratio: 4
+    sample_points: False
 
 
 ###################
@@ -53,10 +54,10 @@ dataset_params:
     - 256
 
   color_jitter:
-    - 0
-    - 0
-    - 0
-  flip2d: 0
+    - 0.4
+    - 0.4
+    - 0.4
+  flip2d: 0.5
   image_normalizer:
     - [0.485, 0.456, 0.406]
     - [0.229, 0.224, 0.225]
@@ -93,14 +94,14 @@ dataset_params:
   train_data_loader:
     # data_path: "/media/yanqiao/Seagate Hub/semantic-kitti/dataset/sequences/"
     data_path: "/home/yanqiao/Documents/semantic-kitti/dataset/sequences/"
-    batch_size: 1
+    batch_size: 3
     shuffle: True
     num_workers: 2
-    rotate_aug: False
-    flip_aug: False
-    scale_aug: False
-    transform_aug: False
-    dropout_aug: False
+    rotate_aug: True
+    flip_aug: True
+    scale_aug: True
+    transform_aug: True
+    dropout_aug: True
 
   val_data_loader:
     # data_path: "/media/yanqiao/Seagate Hub/semantic-kitti/dataset/sequences/"
@@ -109,7 +110,7 @@ dataset_params:
     num_workers: 2
 
     # normal test
-    batch_size: 2
+    batch_size: 3
     rotate_aug: False
     flip_aug: False
     scale_aug: False
@@ -120,7 +121,7 @@ dataset_params:
 ###################
 ## Train params
 train_params:  
-  max_num_epochs: 64
+  max_num_epochs: 80
   learning_rate: 0.24
   optimizer: SGD  # [SGD, Adam]
   lr_scheduler: CosineAnnealingWarmRestarts  # [StepLR, ReduceLROnPlateau, CosineAnnealingLR, CosineAnnealingWarmRestarts]

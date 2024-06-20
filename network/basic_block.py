@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torchvision.models.resnet import resnet34
 from utils.lovasz_loss import lovasz_softmax
 from mmseg.models.backbones import SwinTransformer
-from third_party.SparseTransformer import sptr
+import sptr
 
 def base_block(in_channels, out_channels, indice_key):
     conv = spconv.SparseSequential(

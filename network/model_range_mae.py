@@ -42,10 +42,10 @@ class get_model(LightningBaseModel):
         self._init_mae_(config.model_params.pretrain)
         self.img_size = (256, 1024)
         self.img_patch = (16, 64)
-        self.range_img_size = (64, 1024)
+        self.range_img_size = (64, 2048)
 
         self.img_mask_ratio, self.range_mask_ratio = 0, 0
-        self.range_image_patch = (32, 128)
+        self.range_image_patch = (32, 256)
 
         self.scale_factor = (2, 8)
 

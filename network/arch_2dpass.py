@@ -91,7 +91,6 @@ class xModalKD(nn.Module):
 
         # 3D prediction
         pts_pred_full = self.multihead_3d_classifier[idx](pts_feat)
-
         # correspondence
         pts_label_full = self.voxelize_labels(data_dict['labels'], data_dict['layer_{}'.format(idx)]['full_coors'])
         pts_feat = self.p2img_mapping(pts_feat[coors_inv], point2img_index, batch_idx)
@@ -150,23 +149,23 @@ class get_model(LightningBaseModel):
         self.num_scales = len(self.scale_list)
 
         self.model_3d = SPVCNN(config)
-        if not self.baseline_only:
-            self.model_2d = ResNetFCN(
-                backbone=config.model_params.backbone_2d,
-                pretrained=config.model_params.pretrained2d,
-                config=config
-            )
-            self.fusion = xModalKD(config)
-        else:
-            print('Start vanilla training!')
+        # if not self.baseline_only:
+        self.model_2d = ResNetFCN(
+            backbone=config.model_params.backbone_2d,
+            pretrained=config.model_params.pretrained2d,
+            config=config
+        )
+        self.fusion = xModalKD(config)
+        # else:
+        #     print('Start vanilla training!')
 
     def forward(self, data_dict):
         # 3D network
         data_dict = self.model_3d(data_dict)
 
         # training with 2D network
-        if self.training and not self.baseline_only:
-            data_dict = self.model_2d(data_dict)
-            data_dict = self.fusion(data_dict)
+        # if self.training and not self.baseline_only:
+        data_dict = self.model_2d(data_dict)
+        data_dict = self.fusion(data_dict)
 
         return data_dict

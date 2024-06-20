@@ -26,7 +26,7 @@ model_params:
 ## Dataset options
 dataset_params:
   training_size: 19132
-  dataset_type: "point_image_dataset_semkitti"
+  dataset_type: "point_image_dataset_range_mae_kitti"
   pc_dataset_type: "SemanticKITTI"
   collate_type: "collate_fn_default"
   ignore_label: 0
@@ -34,8 +34,8 @@ dataset_params:
 
   # 2D augmentation
   bottom_crop:
-    - 480
-    - 320
+    - 1024
+    - 256
   color_jitter:
     - 0.4
     - 0.4
@@ -77,9 +77,9 @@ dataset_params:
   train_data_loader:
     # data_path: "/media/yanqiao/Seagate Hub/semantic-kitti/dataset/sequences/"
     data_path: "/home/yanqiao/Documents/semantic-kitti/dataset/sequences/"
-    batch_size: 8
+    batch_size: 1
     shuffle: True
-    num_workers: 8
+    num_workers: 2
     rotate_aug: True
     flip_aug: True
     scale_aug: True
@@ -90,10 +90,10 @@ dataset_params:
     # data_path: "/media/yanqiao/Seagate Hub/semantic-kitti/dataset/sequences/"
     data_path: "/home/yanqiao/Documents/semantic-kitti/dataset/sequences/"
     shuffle: False
-    num_workers: 8
+    num_workers: 2
 
     # normal test
-    batch_size: 16
+    batch_size: 1
     rotate_aug: False
     flip_aug: False
     scale_aug: False

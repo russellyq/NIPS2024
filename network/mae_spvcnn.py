@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from torch import nn
 import numpy as np
 from pcdet.utils.voxel_feat_generation import voxel_3d_generator, voxelization
-from pcdet.models.backbones_3d.spconv_spvcnn import SparseBasicBlock
+from pcdet.models.backbones_3d.spconv_spvcnn import SparseBasicBlock, SparseAttenBlock, base_block
 import os
 import torch
 import torch.nn as nn
@@ -101,8 +101,11 @@ class SPVBlock(nn.Module):
         self.last_scale = last_scale
         self.spatial_shape = spatial_shape
         self.v_enc = spconv.SparseSequential(
-            SparseBasicBlock(in_channels, out_channels, self.indice_key),
-            SparseBasicBlock(out_channels, out_channels, self.indice_key),
+            base_block(in_channels, in_channels, self.indice_key),
+            # SparseBasicBlock(in_channels, out_channels, self.indice_key),
+            # SparseBasicBlock(out_channels, out_channels, self.indice_key),
+            SparseAttenBlock(in_channels, out_channels, self.indice_key),
+            SparseAttenBlock(out_channels, out_channels, self.indice_key),
         )
         self.sample_points = sample_points
         
@@ -180,9 +183,10 @@ class SPVCNN_Decoder(nn.Module):
 
         self.spv_enc = nn.ModuleList()
         for i in range(self.num_scales):
-            self.spv_enc.append(SparseBasicBlock(
-                in_channels=self.hiden_size * 4 + 1,
-                out_channels=self.hiden_size * 4 + 1,
+            self.spv_enc.append(
+                SparseBasicBlock(
+                in_channels=self.hiden_size * 4,
+                out_channels=self.hiden_size * 4,
                 indice_key='spv_decoder_' + str(i)
                 )
             )
@@ -196,7 +200,8 @@ class SPVCNN_Decoder(nn.Module):
     def forward(self, sample_point_feat_fs, sample_point_feat_fs_cls, batch_dict):
 
         sp_tensor = spconv.SparseConvTensor(
-            features=torch.cat([sample_point_feat_fs_cls, sample_point_feat_fs], dim=1),
+            # features=torch.cat([sample_point_feat_fs_cls, sample_point_feat_fs], dim=1),
+            features=sample_point_feat_fs,
             indices=batch_dict['spconv_points_full_coors'].int(),
             spatial_shape=self.spatial_shape,
             batch_size=batch_dict['batch_size']
@@ -301,6 +306,22 @@ class SPVCNN_MAE(nn.Module):
         self.pc_decoder = SPVCNN_Decoder(hidden_size=self.hiden_size)
 
         print('succesfully build SPVCNN_MAE model')
+    
+
+    def forward_decoder_img(self, x, ids_restore): # x, ids_restore: (B, L1=H*W/16/16*(1-mask_ratio)+1=257, C) , (B, L2=H*W/16/16=1024)
+        # embed tokens
+        x = self.image_encoder.decoder_embed(x) # (B, L1, D=512)
+
+        # append mask tokens to sequence
+        mask_tokens = self.image_encoder.mask_token.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1) # (B, L2+1-L1=1024-256=768, D)
+        x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)  # no cls token # (B, L2, D)
+        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2]))  # unshuffle # (B, L2, D)
+        
+        x = torch.cat([x[:, :1, :], x_], dim=1)  # append cls token # (B, L2+1, D)
+
+        # add pos embed
+        x = x + self.image_encoder.decoder_pos_embed # (B, L2+1, D)
+        return x[:, 1:, :]
 
 
     @property
@@ -336,7 +357,7 @@ class SPVCNN_MAE(nn.Module):
 
             if key in state_dict and state_dict[key].shape == val.shape:
                 update_model_state[key] = val
-                # logger.info('Update weight %s: %s' % (key, str(val.shape)))
+                print('Update weight %s: %s' % (key, str(val.shape)))
 
         if strict:
             self.load_state_dict(update_model_state)
@@ -349,7 +370,7 @@ class SPVCNN_MAE(nn.Module):
         if not os.path.isfile(filename):
             raise FileNotFoundError
 
-        logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
+        print('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
         loc_type = torch.device('cpu') if to_cpu else None
         checkpoint = torch.load(filename, map_location=loc_type)
         model_state_disk = checkpoint['model_state']
@@ -360,21 +381,21 @@ class SPVCNN_MAE(nn.Module):
             
         version = checkpoint.get("version", None)
         if version is not None:
-            logger.info('==> Checkpoint trained from version: %s' % version)
+            print('==> Checkpoint trained from version: %s' % version)
 
         state_dict, update_model_state = self._load_state_dict(model_state_disk, strict=False)
 
         for key in state_dict:
             if key not in update_model_state:
-                logger.info('Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
+                print('Not updated weight %s: %s' % (key, str(state_dict[key].shape)))
 
-        logger.info('==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
+        print('==> Done (loaded %d/%d)' % (len(update_model_state), len(state_dict)))
 
     def load_params_with_optimizer(self, filename, to_cpu=False, optimizer=None, logger=None):
         if not os.path.isfile(filename):
             raise FileNotFoundError
 
-        logger.info('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
+        print('==> Loading parameters from checkpoint %s to %s' % (filename, 'CPU' if to_cpu else 'GPU'))
         loc_type = torch.device('cpu') if to_cpu else None
         checkpoint = torch.load(filename, map_location=loc_type)
         epoch = checkpoint.get('epoch', -1)
@@ -384,7 +405,7 @@ class SPVCNN_MAE(nn.Module):
 
         if optimizer is not None:
             if 'optimizer_state' in checkpoint and checkpoint['optimizer_state'] is not None:
-                logger.info('==> Loading optimizer parameters from checkpoint %s to %s'
+                print('==> Loading optimizer parameters from checkpoint %s to %s'
                             % (filename, 'CPU' if to_cpu else 'GPU'))
                 optimizer.load_state_dict(checkpoint['optimizer_state'])
             else:
@@ -397,7 +418,7 @@ class SPVCNN_MAE(nn.Module):
 
         if 'version' in checkpoint:
             print('==> Checkpoint trained from version: %s' % checkpoint['version'])
-        logger.info('==> Done')
+        print('==> Done')
 
         return it, epoch
 

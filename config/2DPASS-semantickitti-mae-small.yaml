@@ -27,7 +27,6 @@ model_params:
   decode_seg_nlayers: 3
   decode_seg_dim: 384
   decode_seg_nhead: 12
-  use_stages: 3
   skip_filters: 128
   # MAE small
   mae_parameters:

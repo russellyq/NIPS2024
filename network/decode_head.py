@@ -43,14 +43,14 @@ def constant_init(module, val, bias=0):
 class MyHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.use_stages = config['use_stages']
+        # self.use_stages = config['use_stages']
         self.nhead = config['decode_seg_nhead']
         self.dim = config['decode_seg_dim']
         self.num_layers = config['decode_seg_nlayers']
         dropout_rate = 0.2
         self.range_patch = (2, 8)
-        self.range_image_size = (64, 1024)
-        self.patch_num = (32, 128)
+        self.range_image_size = (64, 2048)
+        self.patch_num = (32, 256)
         skip_filters = config['skip_filters']
 
         self.up_conv_block = UpConvBlock(

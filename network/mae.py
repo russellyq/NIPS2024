@@ -15,7 +15,7 @@ class MAE(nn.Module):
         
         self.range_mask_ratio, self.img_mask_ratio = 0.75, 0.75
         self.img_size = (256, 1024)
-        self.range_img_size = (64, 1024)
+        self.range_img_size = (64, 2048)
 
         self.image_encoder = MaskedAutoencoderViT(
             patch_size=16, embed_dim=config['embed_dim'], depth=config['depth'], num_heads=config['num_heads'],

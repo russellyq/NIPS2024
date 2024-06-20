@@ -171,8 +171,7 @@ if __name__ == '__main__':
     pl.seed_everything(configs.seed)
     checkpoint_callback = ModelCheckpoint(
         monitor=configs.monitor,
-        # mode='max',
-        mode='min',
+        mode='max',
         save_last=True,
         save_top_k=configs.save_top_k)
 
@@ -200,8 +199,7 @@ if __name__ == '__main__':
                                         LearningRateMonitor(logging_interval='step'),
                                         EarlyStopping(monitor=configs.monitor,
                                                       patience=configs.stop_patience,
-                                                    #   mode='max',
-                                                      mode='min',
+                                                      mode='max',
                                                       verbose=True),
                                         ] + swa,
                              logger=tb_logger,
